@@ -33,8 +33,8 @@ SITUATIONS = [
     "a negotiation with a partner",
 ]
 REPO_URL = "https://github.com/GianlucaBave/murmury"
-TYPES = "Documents (*.pdf *.xlsx *.xlsm *.txt *.md)"
-SUFFIXES = {".pdf", ".xlsx", ".xlsm", ".txt", ".md"}
+TYPES = "Documents (*.pdf *.xlsx *.xlsm *.docx *.pptx *.txt *.md)"
+SUFFIXES = {".pdf", ".xlsx", ".xlsm", ".docx", ".pptx", ".txt", ".md"}
 
 # Apple's type scale (13 pt body, 11-12 pt secondary), native controls, one accent (green); colours from theme.py.
 STYLE = """
@@ -1295,3 +1295,4 @@ def save_style(settings: QSettings, style: Style) -> None:
     for key in STYLE_KEYS:
         value = getattr(style, key)
         settings.setValue(f"style/{key}", str(value).lower() if isinstance(value, bool) else value)
+
