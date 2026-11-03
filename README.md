@@ -19,7 +19,7 @@ small floating window that screen sharing does not capture.
   <br><sub>They ask. You see the answer and its source. Your shared screen shows only your slides.</sub>
 </p>
 
-- **Your documents, your AI:** PDF, Excel and notes; answers come from your own API key for Claude, OpenAI,
+- **Your documents, your AI:** PDF, Excel, Word, PowerPoint and notes; answers come from your own API key for Claude, OpenAI,
   Gemini, Grok (xAI), Groq, Mistral or OpenRouter. Gemini, Groq and OpenRouter have free tiers.
 - **Private by design:** speech is transcribed on your Mac (Whisper on Apple Silicon), nothing is saved,
   no bot joins the call.
@@ -66,7 +66,7 @@ before a customer demo, a contract before a negotiation. Diagrams and the full w
 |---|---|
 | `audiotap/main.swift` | Captures system audio (`audiotap system`) or the microphone (`audiotap mic`) and streams raw float32, 16 kHz mono to stdout |
 | `copilot/listen.py` | Cuts the audio into utterances and transcribes them locally (mlx-whisper, `whisper-large-v3-turbo`) |
-| `copilot/material.py` | Turns the chosen files into one cached block of text: PDF pages keep their page number, spreadsheets keep cell references |
+| `copilot/material.py` | Turns chosen PDF, Excel, Word, PowerPoint and text files into one cached block; pages, sheets, tables and slides keep their source structure |
 | `copilot/answer.py` | Question check and answers through the Claude API, with the material in the prompt cache; answers prepared before the call |
 | `copilot/pipeline.py` | Runs the question check and the live answer in parallel and decides what the window shows |
 | `copilot/setup.py` | The setup screen: documents, kind of call, names to transcribe, model |
@@ -257,4 +257,5 @@ instructions in `copilot/answer.py` and measure the change with `evals/run.py` o
 ## License
 
 GPL-3.0: use it, change it, share it; any version you distribute stays open source. See [LICENSE](LICENSE).
+
 
