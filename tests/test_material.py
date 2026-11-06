@@ -84,3 +84,32 @@ def test_pptx_uses_declared_slide_order_and_includes_notes(tmp_path):
     assert "99" not in source.text
     assert as_prompt(load([path])) == as_prompt(load([path]))
 
+
+
+def test_text_file_in_cp1252_loads_without_losing_accents(tmp_path):
+    notes = tmp_path / "notes.txt"
+    notes.write_bytes(b"Caf\xe9 notes\n")
+
+    [source] = load([notes])
+
+    assert source.kind == "text"
+    assert source.text == "Café notes\n"
+
+
+def test_text_file_with_utf8_bom_drops_the_bom(tmp_path):
+    notes = tmp_path / "notes.md"
+    notes.write_bytes("\ufeffCafé notes\n".encode("utf-8"))
+
+    [source] = load([notes])
+
+    assert source.text == "Café notes\n"
+
+
+def test_text_file_with_bytes_undefined_in_cp1252_still_loads(tmp_path):
+    notes = tmp_path / "export.csv"
+    notes.write_bytes(b"id;name\n1;Caf\xe9 \x81\n")
+
+    [source] = load([notes])
+
+    assert source.text.startswith("id;name\n1;Caf")
+    assert "\x81" in source.text  # latin-1 keeps the byte instead of raising
