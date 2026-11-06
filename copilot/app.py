@@ -192,6 +192,10 @@ class Window(QWidget):
         self.input.returnPressed.connect(self.ask_typed)
         keys = QHBoxLayout()
         keys.addWidget(QLabel("⌥Space ask · ⌥K clear · scroll for earlier answers", objectName="keys"), 1)
+        copy_all = QPushButton("Copy all")
+        copy_all.setCursor(Qt.CursorShape.PointingHandCursor)
+        copy_all.clicked.connect(self.copy_all)
+        keys.addWidget(copy_all)
         keys.addWidget(QSizeGrip(panel), 0, Qt.AlignmentFlag.AlignBottom | Qt.AlignmentFlag.AlignRight)
         box.addWidget(self.heard)
         box.addWidget(self.scroll, 1)
@@ -299,6 +303,29 @@ class Window(QWidget):
             shown = "\n".join(card_lines(self.plain.get(card, "")))
             QApplication.clipboard().setText(f"{question}\n{shown}".strip())
             self.cards[card][3].setText(self.cards[card][3].text().split(" · copied")[0] + " · copied")
+
+    def copy_all(self) -> None:
+        """Copy every card, oldest first, as Markdown: question as heading, answer lines as bullets."""
+        if not self.cards:
+            return
+        parts = []
+        for card in sorted(self.cards):
+            question = self.cards[card][1].text().strip()
+            lines = card_lines(self.plain.get(card, ""))
+            if not question and not lines:
+                continue
+            md = f"## {question}" if question else ""
+            bullets = "\n".join(f"- {line.lstrip("-•* ").strip()}" for line in lines if line.strip())
+            if md and bullets:
+                parts.append(f"{md}\n\n{bullets}")
+            elif md:
+                parts.append(md)
+            elif bullets:
+                parts.append(bullets)
+        text = "\n\n".join(parts).strip()
+        if text:
+            QApplication.clipboard().setText(text)
+            self.bar.setText("Copied all")
 
     def on_meta(self, card: int, text: str) -> None:
         if card in self.cards:
