@@ -8,6 +8,9 @@ to change the answer instructions with numbers instead of impressions.
 
 The cases file (see cases.example.json) names the documents, an optional subset of PDF pages (to keep a
 run cheap), banned terms, and the conversations. Results go to evals/results/, which git ignores.
+
+A separate, cheaper check asks whether answers come from the loaded document at all (right price, a source,
+and "not in the document" for something it never says): see evals/faithfulness.py, which needs no grader.
 """
 
 from __future__ import annotations
