@@ -187,6 +187,17 @@ def _pptx(path: Path) -> str:
         return "\n\n".join(blocks)
 
 
+def _text(path: Path) -> str:
+    """UTF-8 first (a BOM is dropped), then cp1252 for older notes and exports, then latin-1, which
+    maps every byte, so a stray file never stops the whole call."""
+    for encoding in ("utf-8-sig", "cp1252"):
+        try:
+            return path.read_text(encoding=encoding)
+        except UnicodeDecodeError:
+            continue
+    return path.read_text(encoding="latin-1")
+
+
 def load(paths: list[Path]) -> list[Source]:
     sources = []
     for path in paths:
@@ -200,7 +211,7 @@ def load(paths: list[Path]) -> list[Source]:
         elif suffix == ".pptx":
             sources.append(Source(path.name, "pptx", _pptx(path)))
         else:
-            sources.append(Source(path.name, "text", path.read_text(encoding="utf-8")))
+            sources.append(Source(path.name, "text", _text(path)))
     return sources
 
 
