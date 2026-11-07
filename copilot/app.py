@@ -15,7 +15,7 @@ import threading
 import time
 from pathlib import Path
 
-from PySide6.QtCore import QObject, QPoint, Qt, Signal
+from PySide6.QtCore import QObject, QPoint, QRect, Qt, Signal
 from PySide6.QtGui import QFont, QKeySequence, QShortcut
 from PySide6.QtWidgets import (QApplication, QFrame, QHBoxLayout, QLabel, QLineEdit, QPushButton,
                                QScrollArea, QSizeGrip, QVBoxLayout, QWidget)
@@ -237,6 +237,37 @@ class Window(QWidget):
         elif self.normal_size:
             self.resize(self.normal_size)
         self.zoomed = not self.zoomed
+
+    def save_position(self) -> None:
+        """Remember the window position for next start."""
+        from .setup import settings_store
+        settings = settings_store()
+        pos = self.pos()
+        settings.setValue("window/x", pos.x())
+        settings.setValue("window/y", pos.y())
+
+    def restore_position(self, default_pos: QPoint) -> None:
+        """Move to the saved position if it is still on a screen; otherwise use the default."""
+        from .setup import settings_store
+        settings = settings_store()
+        x = settings.value("window/x")
+        y = settings.value("window/y")
+        if x is None or y is None:
+            self.move(default_pos)
+            return
+        try:
+            pos = QPoint(int(x), int(y))
+        except (TypeError, ValueError):
+            self.move(default_pos)
+            return
+        # Keep the window if any part of it intersects an available screen geometry.
+        geo = QRect(pos, self.size())
+        on_screen = False
+        for screen in QApplication.screens():
+            if screen.availableGeometry().intersects(geo):
+                on_screen = True
+                break
+        self.move(pos if on_screen else default_pos)
 
     # drag anywhere on the window
     def mousePressEvent(self, event):
@@ -469,7 +500,8 @@ def main(argv: list[str] | None = None) -> None:
                                                       time.perf_counter()), daemon=True).start()
 
     window = Window(bridge, ask)
-    window.move(app.primaryScreen().availableGeometry().topRight() - QPoint(470, -40))
+    default_pos = app.primaryScreen().availableGeometry().topRight() - QPoint(470, -40)
+    window.restore_position(default_pos)
     window.show()
     import os
 
@@ -479,6 +511,7 @@ def main(argv: list[str] | None = None) -> None:
     if not hidden and not args.show_in_screenshots:
         bridge.status.emit("Warning: this window may be visible when you share your screen")
     threading.Thread(target=start, args=(ready, holder, bridge, args), daemon=True).start()
+    app.aboutToQuit.connect(window.save_position)
     app.aboutToQuit.connect(count_answered_call)
     app.exec()
 
