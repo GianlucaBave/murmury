@@ -93,7 +93,7 @@ def answer_html(text: str) -> str:
         # the one number of the line stands out, so the eye finds it first. quote=False: an apostrophe
         # escaped as &#x27; would put digits inside the text, and the number below would match them
         rest = html.escape(rest, quote=False)
-        rest = re.sub(r"([€$£]?\d[\d.,]*\s?(?:%|×|x|m|bn|k|million|billion)?)", rf'<b style="color:{c["text"]};">\1</b>', rest, count=1)
+        rest = re.sub(r"([€$£]?\d[\d.,]*\s?(?:%|×|(?:x|m|bn|k|million|billion)\b)?)", rf'<b style="color:{c["text"]};">\1</b>', rest, count=1)
         body = (f'<b style="color:{c["text"]};">{html.escape(label.group(1), quote=False)}:</b> ' if label else "") + rest
         tag = (f' <span style="color:{c['tag_fg']}; background:{c['tag_bg']}; font-size:11px;">&nbsp;{html.escape(ref.group(1), quote=False)}&nbsp;</span>'
                if ref else "")
