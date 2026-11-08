@@ -361,6 +361,7 @@ class Config:
     model: str = "claude-sonnet-5-5"
     style: Style = field(default_factory=Style)
     provider: str = providers.DEFAULT
+    address: str = ""  # Ollama / LM Studio on another computer; empty: this Mac
 
 
 def default_provider(settings: QSettings | None = None) -> str:
@@ -620,7 +621,7 @@ class SetupDialog(QDialog):
         for p in providers.PROVIDERS:
             self.provider.addItem(p.name, p.id)
         self.provider.setToolTip("Answers come from your own account with this service, billed by them, "
-                                 "or from a model running on your Mac (Ollama, LM Studio)")
+                                 "or from a model you run yourself (Ollama, LM Studio), on this Mac or another computer")
         self.provider.currentIndexChanged.connect(lambda _: self.provider_changed())
         self.backend_hint = ""
         call.add("AI service", self.provider)
@@ -629,6 +630,11 @@ class SetupDialog(QDialog):
         self.conn_label.setWordWrap(True)
         self.key_field = QLineEdit(echoMode=QLineEdit.EchoMode.Password)
         self.key_field.returnPressed.connect(self.save_key)
+        # Ollama / LM Studio: where the server is. Empty means this Mac.
+        self.address_field = QLineEdit()
+        self.address_field.setToolTip("Leave empty for this Mac. To use another computer on your network, enter its "
+                                      "address, like http://mac-mini.local:11434, and press Return")
+        self.address_field.returnPressed.connect(self.check_connection)
         self.conn_links: list[QPushButton] = []
         self.conn_box = QWidget()
         crow = QHBoxLayout(self.conn_box)
@@ -636,6 +642,7 @@ class SetupDialog(QDialog):
         crow.setSpacing(6)
         crow.addWidget(self.conn_label, 1)
         crow.addWidget(self.key_field, 1)
+        crow.addWidget(self.address_field, 1)
         self.conn_actions = QHBoxLayout()
         self.conn_actions.setSpacing(2)
         crow.addLayout(self.conn_actions)
@@ -859,11 +866,15 @@ class SetupDialog(QDialog):
                         self.vocabulary.text().strip(),
                         self.prepare_n.value() if self.prepare_on.isChecked() else 0,
                         self.model.currentData(), self.current_style(), self.provider_id())
+        if not providers.provider(config.provider).key_required:
+            config.address = self.address_field.text().strip()
         if config.provider != "anthropic":
             config.prepare = 0  # preparing answers uses Anthropic's separate question check
         save_style(self.settings, config.style)
         for key, value in (("situation", config.situation), (f"model_{config.provider}", config.model),
                            ("provider", config.provider),
+                           *([(f"address_{config.provider}", config.address)]
+                             if not providers.provider(config.provider).key_required else []),
                            ("prepare_on", str(self.prepare_on.isChecked()).lower()),
                            ("prepare_n", self.prepare_n.value())):
             self.settings.setValue(key, value)
@@ -1069,6 +1080,8 @@ class SetupDialog(QDialog):
         # measured 8 October 2026 on a 70-page plan: first text 0.64-0.80 s with Claude Sonnet by API
         self.backend_hint = "~0.8 s with Claude Sonnet" if anthropic else p.free
         self.key_field.setPlaceholderText(f"Paste your {p.name.split(' ·')[0]} key ({p.key_hint})")
+        self.address_field.setPlaceholderText(f"This Mac ({p.base_url.removesuffix('/v1')})" if p.base_url else "")
+        self.address_field.setText(str(self.settings.value(f"address_{p.id}") or "") if not p.key_required else "")
         self.prepare_on.setEnabled(anthropic)
         self.prepare_n.setEnabled(anthropic and self.prepare_on.isChecked())
         self.prepare_on.setToolTip("Takes about 30 seconds and costs about $0.5 for 20 questions (estimate)."
@@ -1085,6 +1098,7 @@ class SetupDialog(QDialog):
         hint = f' <span style="color:{colours["tertiary"]};">· {self.backend_hint}</span>' if ok and self.backend_hint else ""
         self.conn_label.setText(mark + text + hint)
         self.key_field.setVisible(key_field)
+        self.address_field.setVisible(not providers.provider(self.provider_id()).key_required)
         for b in self.conn_links:  # out of the layout now, not at the next event loop turn
             b.hide()
             self.conn_actions.removeWidget(b)
@@ -1110,13 +1124,21 @@ class SetupDialog(QDialog):
                                            ("Get a key", lambda: QDesktopServices.openUrl(QUrl(p.key_url)))],
                                 key_field=True)
             return
+        address = self.address_field.text().strip() if not p.key_required else ""
+        try:
+            providers.normalize_address(address, "")
+        except ValueError as error:  # not an http(s) address: say so before asking the network
+            self.model.clear()
+            self.model.setPlaceholderText("Fix the address to see the models")
+            self.set_connection(str(error), False)
+            return
         self.model.setPlaceholderText("Loading local models…" if not p.key_required else "Loading the models…")
         self.set_connection(f"Checking {p.name.split(' ·')[0]}…" if not p.key_required else
                             f"Checking your {p.name.split(' ·')[0]} key…", None)
 
         def run() -> None:
             try:
-                models = providers.list_models(p.id, key)
+                models = providers.list_models(p.id, key, address)
                 self.checked.emit(p.id, {"ok": True, "models": models, "keychain": source == "Keychain",
                                          "suggested": providers.suggest(p.id, models)})
             except Exception as error:
