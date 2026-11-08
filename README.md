@@ -49,14 +49,14 @@ You see the answers, the others see your slides. Measured, not promised: 0 px of
 <td width="33%" align="center" valign="top">
 <img src="docs/assets/elf-whisper.png" height="140" alt="">
 <h3>Private by design</h3>
-Speech is transcribed on your Mac with Whisper. No bot joins the call and nothing is saved. With Ollama or LM Studio, nothing leaves the Mac at all.
+Speech is transcribed on your Mac with Whisper. No bot joins the call and nothing is saved. With Ollama or LM Studio on this Mac, nothing leaves the Mac at all.
 </td>
 </tr>
 </table>
 
 **Your AI, your choice.** Use your own key for Claude, OpenAI, Gemini, Grok (xAI), Groq, Mistral or
-OpenRouter, or a model on your Mac through Ollama or LM Studio. Gemini, Groq and OpenRouter have free
-tiers; local models cost nothing.
+OpenRouter, or a model you run yourself, on your Mac or another computer, through Ollama or LM Studio.
+Gemini, Groq and OpenRouter have free tiers; local models cost nothing.
 
 **Free and open source** (GPL-3.0). If the elf helps you, a ⭐ helps the elf.
 
@@ -108,7 +108,8 @@ Prefer the source? See [For developers](#for-developers).
   names, document locations and settings.
 - Audio never leaves the Mac. Only the text of a question goes to the AI service you chose, with your
   documents, on your own account. Free tiers (Gemini, OpenRouter's free models) may use it for training.
-  With Ollama or LM Studio nothing leaves the Mac at all.
+  With Ollama or LM Studio on this Mac nothing leaves the Mac at all; if you point them at another computer,
+  the question and your documents go to that computer (see below).
 - Tell the other participants that an assistant takes notes where the law asks for it. In the EU and in
   Switzerland, transcribing someone's voice without telling them is a legal risk.
 - Do not use it in exams, tests or job interviews.
@@ -178,6 +179,21 @@ uv run python -m copilot.app
   goes through its own SDK with prompt caching and can prepare answers before the call; the others share
   `copilot/openai_copilot.py` (OpenAI chat format, the answer says SKIP for a line that is not a question).
   Never commit a key.
+
+#### A local model on another computer
+
+Ollama and LM Studio talk to this Mac by default. If a bigger machine (a Mac mini or Mac Studio with lots of
+memory, a PC with a GPU) runs the model, choose Ollama or LM Studio on the setup screen and type that
+machine's address in the **Connection** row, for example `http://mac-mini.local:11434`, then press Return.
+The model list and the answers come from that machine. Leave the field empty to use this Mac. Only
+`http://` and `https://` addresses are accepted, a trailing slash is ignored, and `/v1` is added if you leave
+it out. Transcription stays on your Mac; only the question text and your documents go to the other computer.
+From the command line: `uv run python -m copilot.app --provider ollama --address http://mac-mini.local:11434`.
+
+Ollama listens only on `localhost` by default. On the other computer, open it to the network with
+`OLLAMA_HOST=0.0.0.0 ollama serve` (the Ollama app: set `OLLAMA_HOST` to `0.0.0.0` and restart it).
+Do this only on a network you trust: anyone who can reach that port can use the server, and Ollama has no
+login. You can try it on one computer: start Ollama that way and enter your own Mac's name, `http://<name>.local:11434`.
 
 ### Setup
 
