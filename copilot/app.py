@@ -361,7 +361,11 @@ def run_answer(copilot: PreparedCopilot, bridge: Bridge, card: int, line: str, b
 def start(copilot_ready: threading.Event, holder: dict, bridge: Bridge, args) -> None:
     bridge.status.emit("Loading documents…")
     text = material.as_prompt(material.load([Path(p) for p in args.docs]))
-    service = providers.provider(args.provider)
+    try:
+        service = providers.with_address(providers.provider(args.provider), args.address)
+    except ValueError as error:  # an address that is not http:// or https://
+        bridge.status.emit(str(error))
+        return
     try:
         if service.id == "anthropic":
             copilot = PreparedCopilot(text, situation=args.situation, model=args.model, style=args.style)
@@ -428,6 +432,9 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument("--provider", choices=[p.id for p in providers.PROVIDERS], default=None,
                         help="the AI service whose API key answers (default: as on the setup screen)")
     parser.add_argument("--model", default=None, help="answer model (default: as on the setup screen)")
+    parser.add_argument("--address", default=None,
+                        help="Ollama or LM Studio on another computer, e.g. http://mac-mini.local:11434 "
+                             "(default: as on the setup screen, else this Mac)")
     parser.add_argument("--show-in-screenshots", action="store_true",
                         help="testing only: let screenshots and screen sharing see the window")
     args = parser.parse_args(argv)
@@ -450,11 +457,13 @@ def main(argv: list[str] | None = None) -> None:
         args.docs, args.situation, args.vocabulary = config.docs, config.situation, config.vocabulary
         args.prepare, args.model, args.style = config.prepare, config.model, config.style
         args.provider = config.provider
+        args.address = config.address
     else:
         from .setup import default_provider, load_style, settings_store
         args.style = load_style()
         args.provider = args.provider or default_provider()
         args.model = args.model or settings_store().value(f"model_{args.provider}") or "claude-sonnet-5-5"
+        args.address = args.address or settings_store().value(f"address_{args.provider}") or ""
     global MAX_LINES, FORMAT
     MAX_LINES = args.style.lines
     FORMAT = args.style.format
@@ -493,3 +502,4 @@ def count_answered_call() -> None:
 
 if __name__ == "__main__":
     main()
+    
