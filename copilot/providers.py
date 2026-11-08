@@ -15,7 +15,8 @@ import os
 import re
 import time
 import urllib.request
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
+from urllib.parse import urlsplit, urlunsplit
 
 RECOMMENDED_URL = "https://murmury.pages.dev/models.json"
 
@@ -39,7 +40,7 @@ COMMON_HIDE = (r"embed", r"whisper", r"tts", r"transcribe", r"audio", r"realtime
                r"moderation", r"guard", r"rerank", r"ocr", r"search", r"vision", r"imagen", r"veo", r"live")
 
 # local servers often start with a short context: documents longer than it are cut without a warning
-LOCAL_HINT = "runs on your Mac: set a long context length in it so your documents fit"
+LOCAL_HINT = "a server you run yourself: set a long context length in it so your documents fit"
 LOCAL_PREFER = (r"llama", r"qwen", r"mistral", r"gemma")
 
 PROVIDERS: list[Provider] = [
@@ -80,6 +81,39 @@ DEFAULT = "anthropic"
 
 def provider(provider_id: str | None) -> Provider:
     return BY_ID.get(provider_id or DEFAULT, BY_ID[DEFAULT])
+
+
+# local servers: Ollama or LM Studio, on this Mac by default, or on another computer you trust
+ADDRESS_ERROR = "Use an address that starts with http:// or https://, like http://mac-mini.local:11434"
+
+
+def normalize_address(text: str | None, default: str) -> str:
+    """The base address to talk to. Empty gives the default (localhost). Only http:// and https:// are accepted;
+    a trailing slash is dropped and /v1 is added when missing, so http://mac-mini.local:11434 and
+    http://mac-mini.local:11434/v1/ both work. Raises ValueError for anything else."""
+    text = (text or "").strip()
+    if not text:
+        return default
+    parts = urlsplit(text)
+    try:
+        valid = (parts.scheme.lower() in ("http", "https") and bool(parts.hostname)
+                 and not any(c.isspace() for c in text))
+        parts.port  # a port that is not a number raises ValueError
+    except ValueError:
+        valid = False
+    if not valid:
+        raise ValueError(ADDRESS_ERROR)
+    path = parts.path.rstrip("/")
+    if not path.endswith("/v1"):
+        path += "/v1"
+    return urlunsplit((parts.scheme.lower(), parts.netloc, path, "", ""))
+
+
+def with_address(p: Provider, address: str | None) -> Provider:
+    """The same service at another address. Only the local servers take one; for the others it is ignored."""
+    if p.key_required or p.base_url is None:
+        return p
+    return replace(p, base_url=normalize_address(address, p.base_url))
 
 
 # keys: the environment first, then the Keychain (saved on the setup screen)
@@ -129,9 +163,10 @@ def save_api_key(provider_id: str, key: str | None) -> None:
 
 
 # models
-def list_models(provider_id: str, key: str | None = None) -> list[str]:
-    """List chat models exposed by the provider; local OpenAI-compatible servers need no key."""
-    p = provider(provider_id)
+def list_models(provider_id: str, key: str | None = None, address: str | None = None) -> list[str]:
+    """List chat models exposed by the provider; local OpenAI-compatible servers need no key and may
+    be reached at another address."""
+    p = with_address(provider(provider_id), address)
     if p.base_url is None:
         import anthropic
         ids = [m.id for m in anthropic.Anthropic(api_key=key).models.list(limit=100)]
