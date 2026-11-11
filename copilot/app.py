@@ -136,6 +136,7 @@ def configure_native_window(widget: QWidget, hide_from_capture: bool = True) -> 
 
 class Bridge(QObject):
     status = Signal(str)
+    warning = Signal(str)
     heard = Signal(str)
     card = Signal(int, str)  # create or update the card for a question
     answer = Signal(int, str)  # the card's answer so far
@@ -210,12 +211,24 @@ class Window(QWidget):
         QShortcut(QKeySequence("Alt+Space"), self, self.toggle_input)
         QShortcut(QKeySequence("Alt+K"), self, self.clear)
 
-        bridge.status.connect(self.bar.setText)
+        self.warning_text = ""
+        bridge.status.connect(self.set_status)
+        bridge.warning.connect(self.set_warning)
         bridge.heard.connect(lambda t: self.heard.setText(f"them: {t}"))
         bridge.card.connect(self.on_card)
         bridge.answer.connect(self.on_answer)
         bridge.meta.connect(self.on_meta)
-        bridge.timing.connect(lambda t: self.bar.setText(t))
+        bridge.timing.connect(self.set_status)
+
+    def set_warning(self, warning: str) -> None:
+        self.warning_text = warning
+        if warning:
+            self.bar.setText(f"{self.bar.text()} | {warning}")
+
+    def set_status(self, status: str) -> None:
+        if self.warning_text:
+            status = f"{status} | {self.warning_text}"
+        self.bar.setText(status)
 
     def toggle_compact(self) -> None:
         """Yellow: fold to the status bar only (a floating panel cannot go to the Dock); again to unfold."""
@@ -326,7 +339,7 @@ class Window(QWidget):
         text = "\n\n".join(parts).strip()
         if text:
             QApplication.clipboard().setText(text)
-            self.bar.setText("Copied all")
+            self.set_status("Copied all")
 
     def on_meta(self, card: int, text: str) -> None:
         if card in self.cards:
@@ -388,7 +401,21 @@ def run_answer(copilot: PreparedCopilot, bridge: Bridge, card: int, line: str, b
 
 def start(copilot_ready: threading.Event, holder: dict, bridge: Bridge, args) -> None:
     bridge.status.emit("Loading documents…")
-    text = material.as_prompt(material.load([Path(p) for p in args.docs]))
+    sources = material.load([Path(p) for p in args.docs])
+
+    warnings = [
+        f"{source.name}: {source.warning}"
+        for source in sources
+        if source.warning
+    ]
+
+    if warnings:
+        summary = "; ".join(warnings[:2])
+        if len(warnings) > 2:
+            summary += f"; and {len(warnings) - 2} more"
+        bridge.warning.emit(summary)
+
+    text = material.as_prompt(sources)
     try:
         service = providers.with_address(providers.provider(args.provider), args.address)
     except ValueError as error:  # an address that is not http:// or https://

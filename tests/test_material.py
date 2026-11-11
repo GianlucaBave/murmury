@@ -1,6 +1,6 @@
 from pathlib import Path
 from zipfile import ZIP_DEFLATED, ZipFile
-
+from pypdf import PdfWriter
 from copilot.material import as_prompt, load
 
 
@@ -112,3 +112,45 @@ def test_text_file_with_bytes_undefined_in_cp1252_still_loads(tmp_path):
 
     assert source.text.startswith("id;name\n1;Caf")
     assert "\x81" in source.text  # latin-1 keeps the byte instead of raising
+
+def test_pdf_without_extractable_text_produces_warning(tmp_path):
+    path = tmp_path / "scanned.pdf"
+
+    writer = PdfWriter()
+    writer.add_blank_page(width=72, height=72)
+    writer.write(path)
+
+    [source] = load([path])
+
+    assert source.kind == "pdf"
+    assert source.text == ""
+    assert source.warning == "no text found (scanned?)"
+
+
+def test_password_protected_pdf_produces_warning(tmp_path):
+    path = tmp_path / "protected.pdf"
+
+    writer = PdfWriter()
+    writer.add_blank_page(width=72, height=72)
+    writer.encrypt("test-password")
+    writer.write(path)
+
+    [source] = load([path])
+
+    assert source.kind == "pdf"
+    assert source.text == ""
+    assert source.warning == "password-protected PDF"
+
+
+def test_corrupted_pdf_does_not_stop_other_documents(tmp_path):
+    broken = tmp_path / "broken.pdf"
+    valid = tmp_path / "notes.txt"
+
+    broken.write_bytes(b"This is not a valid PDF")
+    valid.write_text("Valid document content", encoding="utf-8")
+
+    sources = load([broken, valid])
+
+    assert len(sources) == 2
+    assert sources[0].warning
+    assert sources[1].text == "Valid document content"

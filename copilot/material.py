@@ -19,18 +19,30 @@ class Source:
     name: str
     kind: str  # "pdf", "xlsx", "docx", "pptx", "text"
     text: str
-
-
-def _pdf(path: Path) -> str:
+    warning: str | None = None
+def _pdf(path: Path) -> tuple[str, str | None]:
     from pypdf import PdfReader
 
+    reader = PdfReader(path)
+
+    if reader.is_encrypted:
+        try:
+            if not reader.decrypt(""):
+                return "", "password-protected PDF"
+        except Exception:
+            return "", "password-protected PDF"
+
     pages = []
-    for number, page in enumerate(PdfReader(path).pages, start=1):
+    for number, page in enumerate(reader.pages, start=1):
         text = (page.extract_text() or "").strip()
         if text:
             pages.append(f"[page {number}]\n{text}")
-    return "\n\n".join(pages)
 
+    extracted = "\n\n".join(pages)
+    if not extracted:
+        return "", "no text found (scanned?)"
+
+    return extracted, None
 
 def _cell(value: object) -> str:
     if isinstance(value, float):
@@ -200,21 +212,31 @@ def _text(path: Path) -> str:
 
 def load(paths: list[Path]) -> list[Source]:
     sources = []
+
     for path in paths:
         suffix = path.suffix.lower()
+
         if suffix == ".pdf":
-            sources.append(Source(path.name, "pdf", _pdf(path)))
+            try:
+                text, warning = _pdf(path)
+            except Exception:
+                text, warning = "", "could not read PDF"
+
+            sources.append(Source(path.name, "pdf", text, warning))
+
         elif suffix in (".xlsx", ".xlsm"):
             sources.append(Source(path.name, "xlsx", _xlsx(path)))
+
         elif suffix == ".docx":
             sources.append(Source(path.name, "docx", _docx(path)))
+
         elif suffix == ".pptx":
             sources.append(Source(path.name, "pptx", _pptx(path)))
+
         else:
             sources.append(Source(path.name, "text", _text(path)))
+
     return sources
-
-
 def as_prompt(sources: list[Source]) -> str:
     """One stable block of text: same files in, same bytes out, so the prompt cache holds."""
     return "\n\n".join(f'<source name="{s.name}" kind="{s.kind}">\n{s.text}\n</source>' for s in sources)
