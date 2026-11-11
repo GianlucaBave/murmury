@@ -450,6 +450,19 @@ def start(copilot_ready: threading.Event, holder: dict, bridge: Bridge, args) ->
                              daemon=True).start()
 
 
+def keep_awake() -> None:
+    """Keep the display awake while the copilot runs (macOS only).
+
+    `caffeinate` exists only on macOS; on Windows and Linux this is a no-op
+    so `main()` can start on any OS.
+    """
+    if sys.platform != "darwin":
+        return
+    import os
+    import subprocess
+    subprocess.Popen(["caffeinate", "-di", "-w", str(os.getpid())])
+
+
 def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(description="Live answers from your documents during a call")
     parser.add_argument("--docs", nargs="*", default=[], help="PDF, Excel or text files")
@@ -471,7 +484,7 @@ def main(argv: list[str] | None = None) -> None:
     import subprocess
 
     # keep the display awake while the copilot runs: a sleeping display stops the audio capture
-    subprocess.Popen(["caffeinate", "-di", "-w", str(os.getpid())])
+    keep_awake()
     app = QApplication(sys.argv)
     app.setFont(QFont(".AppleSystemUIFont", 13))
     theme.apply_saved()
