@@ -27,6 +27,7 @@ from .openai_copilot import OpenAICopilot
 from .listen import StreamingTranscriber
 from . import theme
 from .chrome import AppearanceButton, TrafficLights
+from .hotkeys import HotKeyError, HotKeys
 from .pipeline import respond
 
 JOIN_SECONDS = 6.0  # a line this soon after the last one continues the same question
@@ -141,6 +142,7 @@ class Bridge(QObject):
     answer = Signal(int, str)  # the card's answer so far
     meta = Signal(int, str)  # the card's timing line
     timing = Signal(str)  # status bar after an answer
+    hotkey = Signal(str)  # a global hotkey was pressed: "ask" or "clear"
 
 
 class Window(QWidget):
@@ -207,8 +209,10 @@ class Window(QWidget):
         self.apply_theme()
         theme.watch(self.apply_theme)
 
-        QShortcut(QKeySequence("Alt+Space"), self, self.toggle_input)
-        QShortcut(QKeySequence("Alt+K"), self, self.clear)
+        # in-window shortcuts; main() turns one off once its global hotkey is registered, so a key never fires twice
+        self.shortcuts = {"ask": QShortcut(QKeySequence("Alt+Space"), self, self.toggle_input),
+                          "clear": QShortcut(QKeySequence("Alt+K"), self, self.clear)}
+        bridge.hotkey.connect(self.on_hotkey)
 
         bridge.status.connect(self.bar.setText)
         bridge.heard.connect(lambda t: self.heard.setText(f"them: {t}"))
@@ -331,6 +335,16 @@ class Window(QWidget):
     def on_meta(self, card: int, text: str) -> None:
         if card in self.cards:
             self.cards[card][3].setText(text)
+
+    def on_hotkey(self, name: str) -> None:
+        """A global hotkey, pressed while any app has focus. Runs on the main thread (it arrives as a Qt signal)."""
+        if name == "ask":
+            if not self.input.isVisible():  # opening the box: the typing has to land here, not in the call app
+                bring_to_front()
+                self.raise_()
+            self.toggle_input()
+        elif name == "clear":
+            self.clear()
 
     def toggle_input(self) -> None:
         self.input.setVisible(not self.input.isVisible())
@@ -519,9 +533,53 @@ def main(argv: list[str] | None = None) -> None:
     hidden = configure_native_window(window, hide_from_capture=not args.show_in_screenshots)
     if not hidden and not args.show_in_screenshots:
         bridge.status.emit("Warning: this window may be visible when you share your screen")
+    hotkeys = register_global_hotkeys(window, bridge)
+    app.aboutToQuit.connect(hotkeys.unregister_all)
     threading.Thread(target=start, args=(ready, holder, bridge, args), daemon=True).start()
     app.aboutToQuit.connect(count_answered_call)
     app.exec()
+
+
+def bring_to_front() -> None:
+    """Make Murmury the active app, so typed text goes to it and not to the call app. Tries the calls newest
+    first: each can be missing or deprecated on some macOS versions, and none of them may stop the hotkey."""
+    try:
+        from AppKit import NSApplication, NSApplicationActivateIgnoringOtherApps, NSRunningApplication
+    except Exception:
+        return
+    for attempt in (lambda: NSApplication.sharedApplication().activateIgnoringOtherApps_(True),
+                    lambda: NSRunningApplication.currentApplication().activateWithOptions_(
+                        NSApplicationActivateIgnoringOtherApps)):
+        try:
+            attempt()
+            return
+        except Exception:
+            continue
+
+
+DEFAULT_HOTKEYS = {"ask": "option+space", "clear": "option+k"}
+
+
+def register_global_hotkeys(window: Window, bridge: Bridge) -> HotKeys:
+    """Make Option+Space and Option+K work while another app is in front (the combinations can be changed with the
+    `hotkey_ask` and `hotkey_clear` preferences). One that cannot be registered keeps its in-window shortcut."""
+    from .setup import settings_store
+
+    hotkeys = HotKeys(bridge.hotkey.emit)
+    if not hotkeys.available:
+        return hotkeys
+    settings = settings_store()
+    problems = []
+    for name, default in DEFAULT_HOTKEYS.items():
+        combo = str(settings.value(f"hotkey_{name}", default) or default)
+        try:
+            hotkeys.register(name, combo)
+            window.shortcuts[name].setEnabled(False)
+        except HotKeyError as error:
+            problems.append(str(error))
+    if problems:
+        bridge.status.emit(f"Global shortcut off: {'; '.join(problems)}. It works while Murmury is in front.")
+    return hotkeys
 
 
 def count_answered_call() -> None:
