@@ -481,7 +481,6 @@ def main(argv: list[str] | None = None) -> None:
     args = parser.parse_args(argv)
 
     import os
-    import subprocess
 
     # keep the display awake while the copilot runs: a sleeping display stops the audio capture
     keep_awake()

@@ -1,31 +1,9 @@
 import subprocess
 import sys
-from unittest.mock import MagicMock
 
 import pytest
 
-# Mock all submodules copilot.app imports so only keep_awake() is tested
-for _mod in (
-    "copilot.material",
-    "copilot.providers",
-    "copilot.answer",
-    "copilot.openai_copilot",
-    "copilot.listen",
-    "copilot.theme",
-    "copilot.chrome",
-    "copilot.pipeline",
-    "PySide6.QtCore",
-    "PySide6.QtGui",
-    "PySide6.QtWidgets",
-):
-    sys.modules[_mod] = MagicMock()
-
 from copilot.app import keep_awake
-
-
-class FakePopen:
-    def __init__(self, args):
-        self.args = args
 
 
 def test_keep_awake_starts_caffeinate_on_darwin(monkeypatch):
