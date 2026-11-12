@@ -1,3 +1,4 @@
+
 """The material the copilot answers from: the files chosen before the call, turned into text.
 
 PDF pages keep their page number, so an answer can point to it. Spreadsheets keep their cached
@@ -20,6 +21,8 @@ class Source:
     kind: str  # "pdf", "xlsx", "docx", "pptx", "text"
     text: str
     warning: str | None = None
+
+
 def _pdf(path: Path) -> tuple[str, str | None]:
     from pypdf import PdfReader
 
@@ -43,6 +46,7 @@ def _pdf(path: Path) -> tuple[str, str | None]:
         return "", "no text found (scanned?)"
 
     return extracted, None
+
 
 def _cell(value: object) -> str:
     if isinstance(value, float):
@@ -217,26 +221,43 @@ def load(paths: list[Path]) -> list[Source]:
         suffix = path.suffix.lower()
 
         if suffix == ".pdf":
-            try:
-                text, warning = _pdf(path)
-            except Exception:
-                text, warning = "", "could not read PDF"
-
-            sources.append(Source(path.name, "pdf", text, warning))
-
+            kind = "pdf"
         elif suffix in (".xlsx", ".xlsm"):
-            sources.append(Source(path.name, "xlsx", _xlsx(path)))
-
+            kind = "xlsx"
         elif suffix == ".docx":
-            sources.append(Source(path.name, "docx", _docx(path)))
-
+            kind = "docx"
         elif suffix == ".pptx":
-            sources.append(Source(path.name, "pptx", _pptx(path)))
-
+            kind = "pptx"
         else:
-            sources.append(Source(path.name, "text", _text(path)))
+            kind = "text"
+
+        try:
+            if kind == "pdf":
+                text, warning = _pdf(path)
+            elif kind == "xlsx":
+                text = _xlsx(path)
+                warning = None
+            elif kind == "docx":
+                text = _docx(path)
+                warning = None
+            elif kind == "pptx":
+                text = _pptx(path)
+                warning = None
+            else:
+                text = _text(path)
+                warning = None
+        except Exception:
+            text = ""
+            warning = f"could not read {kind.upper()}"
+
+        if not text.strip() and warning is None:
+            warning = "no text found"
+
+        sources.append(Source(path.name, kind, text, warning))
 
     return sources
+
+
 def as_prompt(sources: list[Source]) -> str:
     """One stable block of text: same files in, same bytes out, so the prompt cache holds."""
     return "\n\n".join(f'<source name="{s.name}" kind="{s.kind}">\n{s.text}\n</source>' for s in sources)

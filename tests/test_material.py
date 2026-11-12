@@ -1,6 +1,9 @@
+
 from pathlib import Path
 from zipfile import ZIP_DEFLATED, ZipFile
+
 from pypdf import PdfWriter
+
 from copilot.material import as_prompt, load
 
 
@@ -113,6 +116,7 @@ def test_text_file_with_bytes_undefined_in_cp1252_still_loads(tmp_path):
     assert source.text.startswith("id;name\n1;Caf")
     assert "\x81" in source.text  # latin-1 keeps the byte instead of raising
 
+
 def test_pdf_without_extractable_text_produces_warning(tmp_path):
     path = tmp_path / "scanned.pdf"
 
@@ -152,5 +156,35 @@ def test_corrupted_pdf_does_not_stop_other_documents(tmp_path):
     sources = load([broken, valid])
 
     assert len(sources) == 2
-    assert sources[0].warning
+    assert sources[0].warning == "could not read PDF"
     assert sources[1].text == "Valid document content"
+    assert sources[1].warning is None
+
+
+def test_broken_docx_does_not_stop_other_documents(tmp_path):
+    broken = tmp_path / "broken.docx"
+    valid = tmp_path / "notes.txt"
+
+    broken.write_bytes(b"This is not a valid DOCX file")
+    valid.write_text("Valid document content", encoding="utf-8")
+
+    sources = load([broken, valid])
+
+    assert len(sources) == 2
+    assert sources[0].kind == "docx"
+    assert sources[0].text == ""
+    assert sources[0].warning == "could not read DOCX"
+    assert sources[1].kind == "text"
+    assert sources[1].text == "Valid document content"
+    assert sources[1].warning is None
+
+
+def test_empty_text_file_produces_warning(tmp_path):
+    path = tmp_path / "empty.txt"
+    path.write_text("", encoding="utf-8")
+
+    [source] = load([path])
+
+    assert source.kind == "text"
+    assert source.text == ""
+    assert source.warning == "no text found"
