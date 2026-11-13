@@ -59,8 +59,8 @@ def fill(style: str) -> str:
 
 def apply_saved() -> None:
     """At start: the appearance chosen with the sun/moon button, if any; otherwise the Mac's."""
-    from PySide6.QtCore import QSettings
-    saved = QSettings("Murmury", "Murmury").value("appearance", "")
+    from .setup import settings_store  # inside the function: setup.py imports theme
+    saved = settings_store().value("appearance", "")
     if saved in ("light", "dark"):
         set_dark(saved == "dark", remember=False)
 
@@ -77,8 +77,8 @@ def set_dark(dark: bool, remember: bool = True) -> None:
         pass
     app.styleHints().setColorScheme(Qt.ColorScheme.Dark if dark else Qt.ColorScheme.Light)
     if remember:
-        from PySide6.QtCore import QSettings
-        QSettings("Murmury", "Murmury").setValue("appearance", "dark" if dark else "light")
+        from .setup import settings_store
+        settings_store().setValue("appearance", "dark" if dark else "light")
 
 
 def toggle() -> None:
