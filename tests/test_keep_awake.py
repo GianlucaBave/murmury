@@ -1,24 +1,8 @@
+import os
 import subprocess
 import sys
-from unittest.mock import MagicMock
 
 import pytest
-
-# Mock PySide6 and heavy submodules so only keep_awake() is tested.
-for _mod in (
-    "copilot.material",
-    "copilot.providers",
-    "copilot.answer",
-    "copilot.openai_copilot",
-    "copilot.listen",
-    "copilot.theme",
-    "copilot.chrome",
-    "copilot.pipeline",
-    "PySide6.QtCore",
-    "PySide6.QtGui",
-    "PySide6.QtWidgets",
-):
-    sys.modules[_mod] = MagicMock()
 
 from copilot.app import keep_awake
 
