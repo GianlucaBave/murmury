@@ -15,7 +15,7 @@ import threading
 import time
 from pathlib import Path
 
-from PySide6.QtCore import QObject, QPoint, Qt, QUrl, Signal
+from PySide6.QtCore import QObject, QPoint, QRect, Qt, QUrl, Signal
 from PySide6.QtGui import QDesktopServices, QFont, QKeySequence, QShortcut
 from PySide6.QtWidgets import (QApplication, QFrame, QHBoxLayout, QLabel, QLineEdit, QMenuBar, QPushButton,
                                QScrollArea, QSizeGrip, QVBoxLayout, QWidget)
@@ -147,6 +147,28 @@ class Bridge(QObject):
 
 
 class Window(QWidget):
+    def restore_window_position(self) -> None:
+        """Put the window where it was left, unless that spot is no longer on a screen."""
+        from .setup import settings_store
+
+        saved = settings_store().value("window_geometry")
+        if isinstance(saved, QPoint):
+            window = QRect(saved, self.size())
+            if any(screen.availableGeometry().intersects(window) for screen in QApplication.screens()):
+                self.move(saved)
+                return
+        screen = QApplication.primaryScreen()
+        if screen:
+            self.move(screen.availableGeometry().topRight() - QPoint(470, -40))
+
+    def save_window_position(self) -> None:
+        """Remember where the window is, for the next call."""
+        from .setup import settings_store
+
+        settings = settings_store()
+        settings.setValue("window_geometry", self.pos())
+        settings.sync()
+
     def __init__(self, bridge: Bridge, ask):
         super().__init__(None, Qt.WindowType.FramelessWindowHint | Qt.WindowType.WindowStaysOnTopHint
                          | Qt.WindowType.Tool)
@@ -155,6 +177,7 @@ class Window(QWidget):
         self.resize(430, 330)
         self.drag: QPoint | None = None
         self.ask = ask
+        self.restore_window_position()
 
         panel = QFrame(self, objectName="panel")
         outer = QVBoxLayout(self)
@@ -563,7 +586,7 @@ def main(argv: list[str] | None = None) -> None:
                                                       time.perf_counter()), daemon=True).start()
 
     window = Window(bridge, ask)
-    window.move(app.primaryScreen().availableGeometry().topRight() - QPoint(470, -40))
+    app.aboutToQuit.connect(window.save_window_position)
     window.show()
     import os
 
