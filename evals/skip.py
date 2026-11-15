@@ -19,10 +19,13 @@ show them. An empty reply counts as a skip, because the window would show nothin
 
     uv run python -m evals.skip --provider ollama --model gemma3:12b
     uv run python -m evals.skip --provider lm-studio --model qwen3-8b --runs 3
+    uv run python -m evals.skip --provider ollama --model gemma3:4b qwen3:4b llama3.2:3b
 
---provider and --model work as in the app (copilot/providers.py). Anthropic is not measured: it has its own
+--model takes one or more names. With one, the output is the report below and nothing else. With two or more,
+each model gets that report, and one table at the end puts them side by side (a model that cannot be loaded
+gets a row that says so, and the others still run). --provider and --model work as in the app (copilot/providers.py). Anthropic is not measured: it has its own
 question check (Claude Haiku) instead of a SKIP. The exit status is 0 when the run finished, whatever the
-counts: they are a measurement, not a pass or fail.
+counts: they are a measurement, not a pass or fail (2 when no model could be run).
 """
 
 from __future__ import annotations
@@ -146,11 +149,58 @@ def report(results: list[Result], label: str = "") -> None:
             print(f"  {what} [{r.line.kind}] {r.line.text!r}{reply}")
 
 
+# -- comparing models ---------------------------------------------------------------------------
+
+COLUMNS = ("Model", "Answered when it should skip", "Skipped when it should answer", "Accuracy",
+           "Median time to SKIP", "Median time to first word")
+
+
+def _median(results: list[Result]) -> str:
+    return f"{statistics.median(r.seconds for r in results):.2f} s" if results else "none"
+
+
+def summarise(model: str, results: list[Result]) -> list[str]:
+    """One table row: the numbers report() prints, in one line."""
+    should_skip = sum(r.line.expect == SKIP for r in results)
+    should_answer = sum(r.line.expect == ANSWER for r in results)
+    wrong = sum(r.false_answer or r.false_skip for r in results)
+    accuracy = f"{100 * (len(results) - wrong) / len(results):.1f}%" if results else "none"
+    return [model,
+            f"{sum(r.false_answer for r in results)}/{should_skip}",
+            f"{sum(r.false_skip for r in results)}/{should_answer}",
+            accuracy,
+            _median([r for r in results if not r.answered]),
+            _median([r for r in results if r.answered])]
+
+
+def failed_row(model: str, error: object) -> list[str]:
+    """A model that could not be loaded or reached: it says so and the other cells stay empty."""
+    reason = " ".join(str(error).split()).replace("|", "/")
+    return [model, f"failed: {reason}" if reason else "failed", "-", "-", "-", "-"]
+
+
+def table(rows: list[list[str]]) -> str:
+    """The rows as aligned text."""
+    grid = [list(COLUMNS)] + rows
+    widths = [max(len(row[i]) for row in grid) for i in range(len(COLUMNS))]
+    lines = ["  ".join(cell.ljust(w) for cell, w in zip(row, widths)).rstrip() for row in grid]
+    lines.insert(1, "  ".join("-" * w for w in widths))
+    return "\n".join(lines)
+
+
+def markdown_table(rows: list[list[str]]) -> str:
+    """The same rows as a Markdown table, to paste into a pull request."""
+    lines = ["| " + " | ".join(COLUMNS) + " |", "|" + "---|" * len(COLUMNS)]
+    lines += ["| " + " | ".join(row) + " |" for row in rows]
+    return "\n".join(lines)
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Does the model stay quiet when a line is not a question?")
     parser.add_argument("--provider", choices=[p.id for p in providers.PROVIDERS], default="ollama",
                         help="the AI service, as in the app (default: ollama; not anthropic)")
-    parser.add_argument("--model", required=True, help="the answer model, for example gemma3:12b on ollama")
+    parser.add_argument("--model", required=True, nargs="+", metavar="MODEL",
+                        help="the answer model, for example gemma3:12b on ollama; several names are compared in one table")
     parser.add_argument("--runs", type=int, default=1, help="times each line is run; counts are out of lines x runs")
     args = parser.parse_args(argv)
 
@@ -162,15 +212,22 @@ def main(argv: list[str] | None = None) -> int:
     if service.key_required and not key:
         parser.error(f"no {service.name} key: set {' or '.join(service.env)}, or save one on the app's setup screen")
 
-    try:
-        results = evaluate(lambda prompt: build_copilot(service, key, args.model, prompt), max(args.runs, 1))
-    except openai.OpenAIError as error:
-        where = "" if service.key_required else f" (is it running at {service.base_url}?)"
-        print(f"Could not run {args.model} on {service.name}{where}: {error}", file=sys.stderr)
-        return 2
-    report(results, f"{args.model} on {service.name}")
-    return 0
-
+    rows: list[list[str]] = []
+    for model in args.model:
+        try:
+            results = evaluate(lambda prompt: build_copilot(service, key, model, prompt), max(args.runs, 1))
+        except openai.OpenAIError as error:
+            where = "" if service.key_required else f" (is it running at {service.base_url}?)"
+            print(f"Could not run {model} on {service.name}{where}: {error}", file=sys.stderr)
+            rows.append(failed_row(model, error))
+            continue
+        if any(not row[1].startswith("failed") for row in rows):
+            print()  # a blank line between one model's report and the next
+        report(results, f"{model} on {service.name}")
+        rows.append(summarise(model, results))
+    if len(args.model) > 1:
+        print(f"\n{table(rows)}\n\n{markdown_table(rows)}")
+    return 2 if all(row[1].startswith("failed") for row in rows) else 0
 
 if __name__ == "__main__":
     sys.exit(main())
