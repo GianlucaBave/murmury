@@ -21,8 +21,7 @@ FRAME = 480  # 30 ms
 MODEL = "mlx-community/whisper-large-v3-turbo"
 # inside the packaged app the helper sits in the bundle's resources; from source, next to the code
 _ROOT = Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parent.parent))
-AUDIOTAP = _ROOT / "audiotap" / "audiotap"
-
+AUDIOTAP = _ROOT / "audiotap" / ("audiotap.exe" if sys.platform == "win32" else "audiotap")
 
 @dataclass(frozen=True)
 class Utterance:
