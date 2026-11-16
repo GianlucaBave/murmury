@@ -7,21 +7,16 @@ Nothing is written to disk.
 
 from __future__ import annotations
 
-import subprocess
 import sys
 import time
 from collections.abc import Iterator
 from dataclasses import dataclass
-from pathlib import Path
 
 import numpy as np
 
-SAMPLE_RATE = 16_000
-FRAME = 480  # 30 ms
+from .audio import AUDIOTAP, FRAME, SAMPLE_RATE, open_source
+
 MODEL = "mlx-community/whisper-large-v3-turbo"
-# inside the packaged app the helper sits in the bundle's resources; from source, next to the code
-_ROOT = Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parent.parent))
-AUDIOTAP = _ROOT / "audiotap" / "audiotap"
 
 
 @dataclass(frozen=True)
@@ -97,17 +92,13 @@ def listen(source: str = "system", segmenter: Segmenter | None = None, vocabular
     speaker = "them" if source == "system" else "me"
     segmenter = segmenter or Segmenter()
     warm_up()
-    tap = subprocess.Popen([str(AUDIOTAP), source], stdout=subprocess.PIPE)
-    assert tap.stdout is not None
-    try:
-        while chunk := tap.stdout.read(FRAME * 4 * 10):  # ~300 ms per read
-            for speech in segmenter.feed(np.frombuffer(chunk, dtype=np.float32)):
+    with open_source(source) as stream:
+        for chunk in stream:
+            for speech in segmenter.feed(chunk):
                 ended = time.perf_counter()
                 text = transcribe(speech, vocabulary)
                 if text:
                     yield Utterance(speaker, text, len(speech) / SAMPLE_RATE, time.perf_counter() - ended)
-    finally:
-        tap.terminate()
 
 
 if __name__ == "__main__":
@@ -162,10 +153,6 @@ class StreamingTranscriber:
             time.sleep(1.0)
 
     def _run(self, on_ready=None) -> Iterator[Event]:
-        tap = subprocess.Popen([str(AUDIOTAP), self.source], stdout=subprocess.PIPE)
-        assert tap.stdout is not None
-        if on_ready:
-            on_ready()
         speech: list[np.ndarray] = []
         quiet = 0
         pending = np.zeros(0, dtype=np.float32)
@@ -174,9 +161,11 @@ class StreamingTranscriber:
         last_partial = ("", 0)  # text, samples covered
         next_partial = self.partial_every
         started = 0.0
-        try:
-            while chunk := tap.stdout.read(FRAME * 4 * 3):  # ~90 ms per read
-                pending = np.concatenate([pending, np.frombuffer(chunk, dtype=np.float32)])
+        with open_source(self.source) as stream:
+            if on_ready:
+                on_ready()
+            for chunk in stream:
+                pending = np.concatenate([pending, chunk])
                 ended = False
                 while len(pending) >= FRAME:
                     frame, pending = pending[:FRAME], pending[FRAME:]
@@ -217,5 +206,3 @@ class StreamingTranscriber:
                         if text:
                             yield Event("final", self.speaker, text, time.perf_counter(), started=started)
                     last_partial = ("", 0)
-        finally:
-            tap.terminate()
