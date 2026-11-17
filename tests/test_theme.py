@@ -6,6 +6,7 @@ from pathlib import Path
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 import pytest
+from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QApplication
 
 from copilot import theme
@@ -64,6 +65,21 @@ def test_every_stylesheet_token_has_a_colour_in_both_palettes():
     assert tokens - set(theme.DARK) == set(), "tokens missing from DARK"
 
 
+@pytest.mark.parametrize("dark", [False, True], ids=["light", "dark"])
+def test_fill_uses_the_palette_for_the_current_appearance(monkeypatch, dark):
+    monkeypatch.setattr(theme, "is_dark", lambda: dark)
+
+    expected = theme.DARK if dark else theme.LIGHT
+    assert theme.fill("color: $text; background: $panel;") == (
+        f"color: {expected['text']}; background: {expected['panel']};"
+    )
+
+
+def test_fill_fails_for_a_token_missing_from_the_palette():
+    with pytest.raises(KeyError, match="missing_token"):
+        theme.fill("color: $missing_token;")
+
+
 # ---------- saving the appearance ----------
 
 def test_set_dark_true_saves_dark(test_settings):
@@ -84,6 +100,20 @@ def test_set_dark_without_remember_saves_nothing(test_settings):
     assert test_settings.value("appearance") is None
 
 
+@pytest.mark.parametrize(
+    "starting_dark, expected",
+    [(False, "dark"), (True, "light")],
+    ids=["light-to-dark", "dark-to-light"],
+)
+def test_toggle_flips_and_saves_the_appearance(monkeypatch, test_settings, starting_dark, expected):
+    monkeypatch.setattr(theme, "is_dark", lambda: starting_dark)
+
+    theme.toggle()
+    test_settings.sync()
+
+    assert test_settings.value("appearance") == expected
+
+
 @pytest.mark.parametrize("saved, expected", [("dark", True), ("light", False)])
 def test_apply_saved_reads_the_value_back(monkeypatch, test_settings, saved, expected):
     calls = []
@@ -98,3 +128,12 @@ def test_apply_saved_does_nothing_when_nothing_is_saved(monkeypatch):
     monkeypatch.setattr(theme, "set_dark", lambda *a, **k: calls.append(a))
     theme.apply_saved()
     assert calls == []
+
+
+def test_watch_calls_callback_when_the_appearance_changes():
+    calls = []
+    theme.watch(lambda: calls.append("changed"))
+
+    _app.styleHints().colorSchemeChanged.emit(Qt.ColorScheme.Dark)
+
+    assert calls == ["changed"]
