@@ -35,7 +35,7 @@ import json
 import statistics
 import sys
 import time
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from pathlib import Path
 
 import openai
@@ -173,10 +173,39 @@ def summarise(model: str, results: list[Result]) -> list[str]:
             _median([r for r in results if r.answered])]
 
 
+def _seconds(seconds: list[float]) -> dict | None:
+    """The numbers _times() prints, unrounded; None when there is no such line."""
+    if not seconds:
+        return None
+    return {"median": statistics.median(seconds), "slowest": max(seconds), "lines": len(seconds)}
+
+
+def as_json(model: str, results: list[Result]) -> dict:
+    """One model for --json: the numbers report() prints, unrounded, and every line."""
+    wrong = sum(r.false_answer or r.false_skip for r in results)
+    return {"model": model,
+            "error": None,
+            "answered_when_it_should_skip": sum(r.false_answer for r in results),
+            "should_skip": sum(r.line.expect == SKIP for r in results),
+            "skipped_when_it_should_answer": sum(r.false_skip for r in results),
+            "should_answer": sum(r.line.expect == ANSWER for r in results),
+            "accuracy": 100 * (len(results) - wrong) / len(results) if results else None,
+            "time_to_skip": _seconds([r.seconds for r in results if not r.answered]),
+            "time_to_first_word": _seconds([r.seconds for r in results if r.answered]),
+            "lines": [asdict(r) for r in results]}
+
+
 def failed_row(model: str, error: object) -> list[str]:
     """A model that could not be loaded or reached: it says so and the other cells stay empty."""
     reason = " ".join(str(error).split()).replace("|", "/")
     return [model, f"failed: {reason}" if reason else "failed", "-", "-", "-", "-"]
+
+
+def failed_json(model: str, error: object) -> dict:
+    """A model that could not be loaded or reached, for --json: its error and no lines."""
+    return {"model": model,
+            "error": str(error),
+            "lines": []}
 
 
 def table(rows: list[list[str]]) -> str:
