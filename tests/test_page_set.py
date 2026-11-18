@@ -43,7 +43,6 @@ def test_text_that_is_not_a_number_raises(spec):
         page_set(spec)
 
 
-def test_a_backwards_range_gives_no_pages_today():
-    # Not an error today: range(3, 2) is empty, so the eval would run on zero pages without a word.
-    # Raising ValueError (like the text cases above) may be better; this test pins the current behaviour.
-    assert page_set("3-1") == set()
+def test_a_backwards_range_raises_and_names_the_range():
+    with pytest.raises(ValueError, match="3-1"):
+        page_set("3-1")
