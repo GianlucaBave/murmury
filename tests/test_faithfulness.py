@@ -34,6 +34,22 @@ def test_neither_sheet_says_anything_about_a_warranty_or_a_period(name):
 # -- check 1: price -----------------------------------------------------------------------------
 
 
+@pytest.mark.parametrize("text, ok", [
+    ("120", True),
+    ("$120", True),
+    ("$120.00", True),
+    ("The price is 120.", True),
+    ("The price is (120).", True),
+    ("1200", False),
+    ("1,200", False),
+    ("$1,120", False),
+    ("120,000", False),
+    ("120.5", False),
+])
+def test_mentions_price(text, ok):
+    assert f.mentions_price(text, "120") is ok
+
+
 @pytest.mark.parametrize("answer, ok", [
     ("SAY: It costs $120 per lamp, tax not included.", True),
     ("SAY: It is 120 dollars.", True),
