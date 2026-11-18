@@ -202,6 +202,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--model", required=True, nargs="+", metavar="MODEL",
                         help="the answer model, for example gemma3:12b on ollama; several names are compared in one table")
     parser.add_argument("--runs", type=int, default=1, help="times each line is run; counts are out of lines x runs")
+    parser.add_argument("--json", type=Path, metavar="PATH",
+                        help="also write the results to this file as JSON")
     args = parser.parse_args(argv)
 
     service = providers.provider(args.provider)
