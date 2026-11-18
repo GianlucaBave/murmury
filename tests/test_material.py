@@ -1,9 +1,10 @@
 from pathlib import Path
 from zipfile import ZIP_DEFLATED, ZipFile
 
+from openpyxl import Workbook
 from pypdf import PdfWriter
 
-from copilot.material import as_prompt, load
+from copilot.material import _cell, as_prompt, load
 
 
 W = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
@@ -187,3 +188,103 @@ def test_empty_text_file_produces_warning(tmp_path):
     assert source.kind == "text"
     assert source.text == ""
     assert source.warning == "no text found"
+
+
+def test_cell_formats_numbers_and_strings():
+    assert _cell(3.14159) == "3.1416"
+    assert _cell(2.5) == "2.5"
+    assert _cell(1234567.8) == "1,234,568"
+    assert _cell(42) == "42"
+    assert _cell("hello") == "hello"
+
+
+def test_xlsx_keeps_visible_sheets_rows_and_skips_hidden_and_empty(tmp_path):
+    path = tmp_path / "book.xlsx"
+    wb = Workbook()
+    ws1 = wb.active
+    ws1.title = "Alpha"
+    ws1["A1"] = "x"
+    ws1["B1"] = "y"
+    ws1["A2"] = "z"
+
+    hidden = wb.create_sheet("Hidden")
+    hidden.sheet_state = "hidden"
+    hidden["A1"] = "secret"
+
+    ws2 = wb.create_sheet("Beta")
+    ws2["A1"] = 1
+
+    wb.save(path)
+
+    [source] = load([path])
+
+    assert source.kind == "xlsx"
+    assert source.warning is None
+    assert source.text == "[sheet Alpha]\nA1=x | B1=y\nA2=z\n\n[sheet Beta]\nA1=1"
+    assert "Hidden" not in source.text
+    assert "secret" not in source.text
+
+
+def test_xlsm_goes_through_excel_loader(tmp_path):
+    path = tmp_path / "macro.xlsm"
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Data"
+    ws["A1"] = "ok"
+    wb.save(path)
+
+    [source] = load([path])
+
+    assert source.kind == "xlsx"
+    assert source.text == "[sheet Data]\nA1=ok"
+    assert source.warning is None
+
+
+def test_pdf_pages_keep_numbers_and_skip_empty_without_renumbering(monkeypatch, tmp_path):
+    class Page:
+        def __init__(self, text):
+            self._text = text
+
+        def extract_text(self):
+            return self._text
+
+    class Reader:
+        def __init__(self, path):
+            self.is_encrypted = False
+            self.pages = [Page("First"), Page("   "), Page("Third")]
+
+    monkeypatch.setattr("pypdf.PdfReader", Reader)
+
+    path = tmp_path / "doc.pdf"
+    path.write_bytes(b"%PDF-1.4 fake")
+
+    [source] = load([path])
+
+    assert source.kind == "pdf"
+    assert source.warning is None
+    assert source.text == "[page 1]\nFirst\n\n[page 3]\nThird"
+
+
+def test_uppercase_pdf_goes_through_pdf_loader(monkeypatch, tmp_path):
+    class Page:
+        def __init__(self, text):
+            self._text = text
+
+        def extract_text(self):
+            return self._text
+
+    class Reader:
+        def __init__(self, path):
+            self.is_encrypted = False
+            self.pages = [Page("Hello")]
+
+    monkeypatch.setattr("pypdf.PdfReader", Reader)
+
+    path = tmp_path / "DOC.PDF"
+    path.write_bytes(b"%PDF-1.4 fake")
+
+    [source] = load([path])
+
+    assert source.kind == "pdf"
+    assert source.text == "[page 1]\nHello"
+    assert source.warning is None
