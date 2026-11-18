@@ -244,6 +244,7 @@ def main(argv: list[str] | None = None) -> int:
         parser.error(f"no {service.name} key: set {' or '.join(service.env)}, or save one on the app's setup screen")
 
     rows: list[list[str]] = []
+    entries: list[dict] = []
     for model in args.model:
         try:
             results = evaluate(lambda prompt: build_copilot(service, key, model, prompt), max(args.runs, 1))
@@ -251,13 +252,18 @@ def main(argv: list[str] | None = None) -> int:
             where = "" if service.key_required else f" (is it running at {service.base_url}?)"
             print(f"Could not run {model} on {service.name}{where}: {error}", file=sys.stderr)
             rows.append(failed_row(model, error))
+            entries.append(failed_json(model, error))
             continue
         if any(not row[1].startswith("failed") for row in rows):
             print()  # a blank line between one model's report and the next
         report(results, f"{model} on {service.name}")
         rows.append(summarise(model, results))
+        entries.append(as_json(model, results))
     if len(args.model) > 1:
         print(f"\n{table(rows)}\n\n{markdown_table(rows)}")
+    if args.json:
+        data = {"provider": service.id, "runs": max(args.runs, 1), "models": entries}
+        args.json.write_text(json.dumps(data, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
     return 2 if all(row[1].startswith("failed") for row in rows) else 0
 
 
