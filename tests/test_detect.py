@@ -1,5 +1,7 @@
 """Tests for evals/detect.py: the question detectors and how they are scored."""
 
+import pytest
+
 from evals import detect
 from evals.skip import ANSWER, SKIP, Line, load
 
@@ -59,3 +61,48 @@ def test_held_out_misses_are_listed_only_when_asked(capsys):
     detect.main(["--show-heldout-errors"])
     shown = capsys.readouterr().out
     assert all(text in shown for text in missed)
+
+
+@pytest.mark.parametrize("text, answered", [
+    ("How much does the lamp cost?", True),
+    ("and the height?", True),
+    ("Tell me what the lamp is made for.", True),
+    ("I\u2019d like to know how long the cable is.", True),
+    ("Can you hear me okay?", False),
+    ("How's the weather over there?", False),
+    ("Let me share my screen.", False),
+    ("Give me a moment, I'm opening the file.", False),
+    ("Thanks, that's helpful.", False),
+    ("", False),
+])
+def test_rules_answer_questions_and_requests_but_not_call_chatter(text, answered):
+    assert detect.rules(line(text)) is answered
+
+
+TOY = [
+    ("What is the price of the lamp?", detect.ANSWER),
+    ("How tall is it?", detect.ANSWER),
+    ("Is it dimmable?", detect.ANSWER),
+    ("What colours does it come in?", detect.ANSWER),
+    ("Thanks, that is all.", detect.SKIP),
+    ("Hello everyone, welcome.", detect.SKIP),
+    ("Let me share my screen.", detect.SKIP),
+    ("Okay, great, perfect.", detect.SKIP),
+]
+
+
+def test_features_are_repeatable_and_mark_a_final_question_mark():
+    vector = detect.features("Is it dimmable?")
+    assert vector.shape == (detect.BUCKETS + 1,)
+    assert (vector == detect.features("Is it dimmable?")).all()
+    assert vector[-1] == 1.0
+    assert detect.features("Is it dimmable.")[-1] == 0.0
+    assert abs(float((vector[:-1] ** 2).sum()) - 1.0) < 1e-9
+
+
+def test_training_is_repeatable_and_separates_a_toy_set():
+    lines = [line(text, expect) for text, expect in TOY]
+    weights = detect.train(lines)
+    assert (weights == detect.train(lines)).all()
+    classify = detect.classifier(weights)
+    assert [classify(item) for item in lines] == [item.expect == detect.ANSWER for item in lines]

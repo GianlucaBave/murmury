@@ -23,8 +23,11 @@ import argparse
 import statistics
 import sys
 import time
+import zlib
 from collections.abc import Callable
 from dataclasses import dataclass
+
+import numpy as np
 
 from evals.skip import ANSWER, FIXTURES, LINES, SKIP, Line, load
 
@@ -38,7 +41,59 @@ def question_mark(line: Line) -> bool:
     return line.text.strip().endswith("?")
 
 
-DETECTORS: dict[str, Detector] = {"question mark": question_mark}
+CHATTER = ("hear me", "see my screen", "see the screen", "weather", "weekend", "how are you", "how's it going",
+           "give me a moment", "give me a second", "give me a minute")
+REQUESTS = ("tell me", "give me", "show me", "i'd like to know", "i would like to know", "i want to know")
+
+
+def rules(line: Line) -> bool:
+    """Questions and requests are answered, unless the line is call chatter phrased as a question."""
+    text = " ".join(line.text.lower().replace("\u2019", "'").split())
+    if any(phrase in text for phrase in CHATTER):
+        return False
+    return text.endswith("?") or text.startswith(REQUESTS)
+
+
+BUCKETS = 1024
+
+
+def features(text: str) -> np.ndarray:
+    """Hashed character 2-4-grams (L2-normalised) plus one cell for a final question mark."""
+    text = " ".join(text.lower().replace("\u2019", "'").split())
+    padded = f" {text} "
+    vector = np.zeros(BUCKETS + 1)
+    for size in (2, 3, 4):
+        for start in range(len(padded) - size + 1):
+            vector[zlib.crc32(padded[start:start + size].encode("utf-8")) % BUCKETS] += 1
+    vector[:BUCKETS] /= max(float(np.linalg.norm(vector[:BUCKETS])), 1.0)
+    vector[BUCKETS] = float(text.endswith("?"))
+    return vector
+
+
+def train(lines: list[Line], epochs: int = 400, rate: float = 2.0, shrink: float = 0.01) -> np.ndarray:
+    """Logistic regression by full-batch gradient descent. No randomness, so the result is repeatable."""
+    x = np.stack([features(line.text) for line in lines])
+    y = np.array([1.0 if line.expect == ANSWER else 0.0 for line in lines])
+    weights = np.zeros(x.shape[1] + 1)
+    for _ in range(epochs):
+        p = 1.0 / (1.0 + np.exp(-np.clip(x @ weights[:-1] + weights[-1], -30, 30)))
+        error = p - y
+        weights[:-1] -= rate * (x.T @ error / len(y) + shrink * weights[:-1])
+        weights[-1] -= rate * float(error.mean())
+    return weights
+
+
+def classifier(weights: np.ndarray) -> Detector:
+    def detect(line: Line) -> bool:
+        return bool(features(line.text) @ weights[:-1] + weights[-1] > 0)
+    return detect
+
+
+DETECTORS: dict[str, Detector] = {
+    "question mark": question_mark,
+    "rules": rules,
+    "classifier": classifier(train(load(LINES)[1])),
+}
 
 
 @dataclass(frozen=True)
