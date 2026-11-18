@@ -1,3 +1,4 @@
+import json
 import time
 
 import openai
@@ -413,3 +414,83 @@ def test_the_text_table_lines_up_its_columns():
 
 def test_a_pipe_in_an_error_does_not_break_the_markdown_row():
     assert s.markdown_table([s.failed_row("m", "a | b\nc")]).splitlines()[2].count("|") == 7
+
+
+
+# -- the --json file -------------------------------------------------------------------------------
+
+
+def run_json(monkeypatch, tmp_path, replies, *more):
+    """main() with --json for fake models: the exit status, and the file read back."""
+    fake_models(monkeypatch, replies)
+    path = tmp_path / "skip.json"
+    status = s.main(["--provider", "ollama", "--model", *replies, "--json", str(path), *more])
+    return status, json.loads(path.read_text(encoding="utf-8"))
+
+
+def test_the_json_has_one_entry_per_model_in_the_order_given(monkeypatch, tmp_path):
+    status, data = run_json(monkeypatch, tmp_path, {"c": perfect, "a": perfect, "b": perfect})
+    assert status == 0
+    assert data["provider"] == "ollama" and data["runs"] == 1
+    assert [m["model"] for m in data["models"]] == ["c", "a", "b"]
+
+
+def test_one_model_with_json_writes_the_file_too(monkeypatch, tmp_path):
+    _, data = run_json(monkeypatch, tmp_path, {"a": perfect})
+    assert [m["model"] for m in data["models"]] == ["a"]
+
+
+def test_the_numbers_in_the_json_are_the_ones_the_table_prints(monkeypatch, tmp_path, capsys):
+    _, data = run_json(monkeypatch, tmp_path, {"good": perfect, "chatty": answer_text, "quiet": mute})
+    out = capsys.readouterr().out
+    rows = {line.split("|")[1].strip(): [c.strip() for c in line.split("|")[2:-1]]
+            for line in out.splitlines() if line.startswith("| ") and "Model" not in line}
+    assert set(rows) == {"good", "chatty", "quiet"}
+
+    def median(times):
+        return "none" if times is None else f"{times['median']:.2f} s"
+
+    for m in data["models"]:
+        assert rows[m["model"]] == [f"{m['answered_when_it_should_skip']}/{m['should_skip']}",
+                                    f"{m['skipped_when_it_should_answer']}/{m['should_answer']}",
+                                    f"{m['accuracy']:.1f}%",
+                                    median(m["time_to_skip"]),
+                                    median(m["time_to_first_word"])]
+
+
+def test_the_json_keeps_every_line_with_what_the_window_would_show(monkeypatch, tmp_path):
+    _, data = run_json(monkeypatch, tmp_path, {"a": perfect}, "--runs", "2")
+    lines = data["models"][0]["lines"]
+    assert data["runs"] == 2 and len(lines) == 80
+    assert [entry["line"]["text"] for entry in lines[:40]] == [line.text for line in LINES]
+    for entry in lines:
+        assert set(entry["line"]) == {"text", "expect", "kind", "before"}
+        assert entry["answered"] == (entry["line"]["expect"] == s.ANSWER)
+        assert entry["shown"] == ("SAY: It is $120 per lamp." if entry["answered"] else "")
+        assert isinstance(entry["seconds"], float)
+
+
+def test_a_model_that_failed_is_in_the_json_with_its_error(monkeypatch, tmp_path):
+    status, data = run_json(monkeypatch, tmp_path, {"a": perfect, "gone": None})
+    assert status == 0
+    assert data["models"][0]["error"] is None
+    assert data["models"][1] == {"model": "gone", "error": "model not found", "lines": []}
+
+
+def test_when_every_model_fails_the_json_is_still_written_with_each_error(monkeypatch, tmp_path):
+    status, data = run_json(monkeypatch, tmp_path, {"x": None, "y": None})
+    assert status == 2
+    assert [(m["model"], m["error"]) for m in data["models"]] == [("x", "model not found"), ("y", "model not found")]
+
+
+def test_without_json_nothing_is_written(monkeypatch, tmp_path):
+    fake_models(monkeypatch, {"a": perfect, "b": perfect})
+    monkeypatch.chdir(tmp_path)
+    assert s.main(["--provider", "ollama", "--model", "a", "b"]) == 0
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_a_time_in_the_json_is_null_when_no_line_was_skipped_or_answered():
+    entry = s.as_json("m", [result("How much?", s.ANSWER, True, 0.4), result("What colours?", s.ANSWER, True, 1.0)])
+    assert entry["time_to_skip"] is None
+    assert entry["time_to_first_word"] == pytest.approx({"median": 0.7, "slowest": 1.0, "lines": 2})
