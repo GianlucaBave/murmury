@@ -19,6 +19,10 @@ def _archive(path: Path, members: dict[str, str]) -> None:
             archive.writestr(name, contents)
 
 
+def _docx(path: Path, body: str) -> None:
+    _archive(path, {"word/document.xml": f'<w:document xmlns:w="{W}"><w:body>{body}</w:body></w:document>'})
+
+
 def test_docx_keeps_paragraphs_and_tables_in_document_order(tmp_path):
     path = tmp_path / "brief.docx"
     _archive(
@@ -40,6 +44,95 @@ def test_docx_keeps_paragraphs_and_tables_in_document_order(tmp_path):
     assert source.kind == "docx"
     assert source.text == "Opening\n\nMetric | Value\n\nConclusion"
     assert as_prompt(load([path])) == as_prompt(load([path]))
+
+
+def test_docx_tab_between_words(tmp_path):
+    path = tmp_path / "brief.docx"
+    _docx(path, '<w:p><w:r><w:t>Name</w:t><w:tab/><w:t>Value</w:t></w:r></w:p>')
+    [source] = load([path])
+    assert source.text == "Name\tValue"
+    assert source.warning is None
+
+
+def test_docx_line_breaks_inside_paragraph(tmp_path):
+    path = tmp_path / "brief.docx"
+    _docx(path, '<w:p><w:r><w:t>a</w:t><w:br/><w:t>b</w:t><w:cr/><w:t>c</w:t></w:r></w:p>')
+    [source] = load([path])
+    assert source.text == "a\nb\nc"
+    assert source.warning is None
+
+
+def test_docx_empty_and_space_only_paragraphs_dropped(tmp_path):
+    path = tmp_path / "brief.docx"
+    _docx(
+        path,
+        '<w:p><w:r><w:t>A</w:t></w:r></w:p>'
+        '<w:p/>'
+        '<w:p><w:r><w:t xml:space="preserve">   </w:t></w:r></w:p>'
+        '<w:p><w:r><w:t xml:space="preserve">  B  </w:t></w:r></w:p>',
+    )
+    [source] = load([path])
+    assert source.text == "A\n\nB"
+    assert source.warning is None
+
+
+def test_docx_cell_with_two_paragraphs_and_cells(tmp_path):
+    path = tmp_path / "brief.docx"
+    _docx(
+        path,
+        '<w:tbl><w:tr>'
+        '<w:tc><w:p><w:r><w:t>First</w:t></w:r></w:p><w:p><w:r><w:t>Second</w:t></w:r></w:p></w:tc>'
+        '<w:tc><w:p><w:r><w:t>Other</w:t></w:r></w:p></w:tc>'
+        "</w:tr></w:tbl>",
+    )
+    [source] = load([path])
+    assert source.text == "First Second | Other"
+    assert source.warning is None
+
+
+def test_docx_table_row_all_empty_cells_dropped(tmp_path):
+    path = tmp_path / "brief.docx"
+    _docx(
+        path,
+        '<w:p><w:r><w:t>Header</w:t></w:r></w:p>'
+        '<w:tbl><w:tr>'
+        '<w:tc><w:p><w:r><w:t>Q1</w:t></w:r></w:p></w:tc>'
+        '<w:tc><w:p><w:r><w:t>10</w:t></w:r></w:p></w:tc>'
+        '</w:tr><w:tr>'
+        '<w:tc><w:p/></w:tc>'
+        '<w:tc><w:p><w:r><w:t xml:space="preserve">  </w:t></w:r></w:p></w:tc>'
+        '</w:tr><w:tr>'
+        '<w:tc><w:p><w:r><w:t>Q3</w:t></w:r></w:p></w:tc>'
+        '<w:tc><w:p><w:r><w:t>30</w:t></w:r></w:p></w:tc>'
+        '</w:tr></w:tbl>'
+        '<w:p><w:r><w:t>Footer</w:t></w:r></w:p>',
+    )
+    [source] = load([path])
+    assert source.text == "Header\n\nQ1 | 10\nQ3 | 30\n\nFooter"
+    assert source.warning is None
+
+
+def test_docx_empty_table_adds_no_block(tmp_path):
+    path = tmp_path / "brief.docx"
+    _docx(
+        path,
+        '<w:p><w:r><w:t>A</w:t></w:r></w:p>'
+        '<w:tbl><w:tr>'
+        '<w:tc><w:p/></w:tc>'
+        "</w:tr></w:tbl>"
+        '<w:p><w:r><w:t>B</w:t></w:r></w:p>',
+    )
+    [source] = load([path])
+    assert source.text == "A\n\nB"
+    assert source.warning is None
+
+
+def test_docx_empty_body_gives_no_text_warning(tmp_path):
+    path = tmp_path / "brief.docx"
+    _archive(path, {"word/document.xml": f'<w:document xmlns:w="{W}"><w:body/></w:document>'})
+    [source] = load([path])
+    assert source.text == ""
+    assert source.warning == "no text found"
 
 
 def test_pptx_uses_declared_slide_order_and_includes_notes(tmp_path):
