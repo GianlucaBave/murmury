@@ -20,12 +20,19 @@ show them. An empty reply counts as a skip, because the window would show nothin
     uv run python -m evals.skip --provider ollama --model gemma3:12b
     uv run python -m evals.skip --provider lm-studio --model qwen3-8b --runs 3
     uv run python -m evals.skip --provider ollama --model gemma3:4b qwen3:4b llama3.2:3b
+    uv run python -m evals.skip --provider ollama --model gemma3:4b qwen3:4b --json skip-results.json
 
 --model takes one or more names. With one, the output is the report below and nothing else. With two or more,
 each model gets that report, and one table at the end puts them side by side (a model that cannot be loaded
 gets a row that says so, and the others still run). --provider and --model work as in the app (copilot/providers.py). Anthropic is not measured: it has its own
 question check (Claude Haiku) instead of a SKIP. The exit status is 0 when the run finished, whatever the
 counts: they are a measurement, not a pass or fail (2 when no model could be run).
+
+--json PATH also writes the run to a file, to compare one run with another or plot them: the provider, the
+runs, and for each model, in the order given, the counts and times the report prints (unrounded; a time is
+null when no line was skipped or answered) and every line with whether it was answered, the time and what the
+window would have shown. A model that could not be run is in the file with its error and no lines. Without
+--json, nothing is written.
 """
 
 from __future__ import annotations
