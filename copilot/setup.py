@@ -600,6 +600,10 @@ class SetupDialog(QDialog):
         left.addWidget(self.drop)
         self.files = Group()
         left.addWidget(self.files)
+        self.drop_warning = QLabel("", objectName="muted", wordWrap=True)
+        self.drop_warning.setVisible(False)
+        self.drop_message = self.drop_warning
+        left.addWidget(self.drop_warning)
         left.addSpacing(6)
 
         # left: the call
@@ -775,14 +779,33 @@ class SetupDialog(QDialog):
 
     # documents
     def add_paths(self, paths: list[str]) -> None:
+        left_out: list[tuple[str, str]] = []
         for p in paths:
             path = Path(p)
-            if path.suffix.lower() in SUFFIXES and path.is_file() and str(path) not in self.paths_:
+            if not path.exists():
+                left_out.append((path.name or str(path), "does not exist"))
+            elif path.is_dir():
+                left_out.append((path.name or str(path), "folder"))
+            elif path.suffix.lower() not in SUFFIXES:
+                left_out.append((path.name or str(path), "not a supported type"))
+            elif str(path) not in self.paths_:
                 self.paths_.append(str(path))
+        if hasattr(self, "drop_warning"):
+            if left_out:
+                self.drop_warning.setText(
+                    "Left out: " + ", ".join(f"{name} ({reason})" for name, reason in left_out)
+                )
+                self.drop_warning.setVisible(True)
+            elif paths:
+                self.drop_warning.setText("")
+                self.drop_warning.setVisible(False)
         self.refresh()
 
     def remove_path(self, path: str) -> None:
         self.paths_.remove(path)
+        if hasattr(self, "drop_warning"):
+            self.drop_warning.setText("")
+            self.drop_warning.setVisible(False)
         self.refresh()
 
     def add_files(self) -> None:
@@ -989,6 +1012,9 @@ class SetupDialog(QDialog):
         if call is None:
             return
         self.current_call = call_id
+        if hasattr(self, "drop_warning"):
+            self.drop_warning.setText("")
+            self.drop_warning.setVisible(False)
         self.call_name.setText(call.get("name", ""))
         self.paths_ = [d for d in call.get("docs", []) if Path(d).exists()]
         missing = len(call.get("docs", [])) - len(self.paths_)
@@ -1057,6 +1083,9 @@ class SetupDialog(QDialog):
         self._saved_state = self.call_state()
 
     def back_to_calls(self) -> None:
+        if hasattr(self, "drop_warning"):
+            self.drop_warning.setText("")
+            self.drop_warning.setVisible(False)
         self.persist_call()
         self.fill_home()
         self.pages.setCurrentIndex(0)
