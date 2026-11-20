@@ -77,10 +77,26 @@ def card_lines(text: str) -> list[str]:
     return lines
 
 
-def answer_html(text: str) -> str:
+def resolve_source_target(ref_text: str, docs: list[Path]) -> Path | None:
+    """When unambiguous (only one document, or the tag names the document), return its Path."""
+    if not docs:
+        return None
+    if len(docs) == 1:
+        return docs[0]
+    low = ref_text.lower().strip()
+    for doc in docs:
+        name_low = doc.name.lower()
+        stem_low = doc.stem.lower()
+        if name_low in low or stem_low in low:
+            return doc
+    return None
+
+
+def answer_html(text: str, docs: list[Path | str] | None = None) -> str:
     """The SAY line large and bold; the facts as bullets with their source as a small tag."""
     c = theme.palette()
     head, items = "", []
+    doc_paths = [Path(p) for p in docs] if docs else []
     for line in card_lines(text):
         if line.upper().startswith("SAY:"):
             head = f'<p style="font-size:15px; font-weight:600; color:{c['text']}; margin:0 0 6px 0;">{html.escape(line[4:].strip(), quote=False)}</p>'
@@ -96,8 +112,17 @@ def answer_html(text: str) -> str:
         rest = html.escape(rest, quote=False)
         rest = re.sub(r"([€$£]?\d[\d.,]*\s?(?:%|×|(?:x|m|bn|k|million|billion)\b)?)", rf'<b style="color:{c["text"]};">\1</b>', rest, count=1)
         body = (f'<b style="color:{c["text"]};">{html.escape(label.group(1), quote=False)}:</b> ' if label else "") + rest
-        tag = (f' <span style="color:{c['tag_fg']}; background:{c['tag_bg']}; font-size:11px;">&nbsp;{html.escape(ref.group(1), quote=False)}&nbsp;</span>'
-               if ref else "")
+        if ref:
+            ref_text = ref.group(1)
+            target = resolve_source_target(ref_text, doc_paths)
+            badge = f'<span style="color:{c['tag_fg']}; background:{c['tag_bg']}; font-size:11px;">&nbsp;{html.escape(ref_text, quote=False)}&nbsp;</span>'
+            if target:
+                url = QUrl.fromLocalFile(str(target.resolve())).toString()
+                tag = f' <a href="{html.escape(url)}" style="text-decoration:none;">{badge}</a>'
+            else:
+                tag = f' {badge}'
+        else:
+            tag = ""
         items.append((body, tag))
     if FORMAT == "script":  # one paragraph, read on from the SAY line
         text = " ".join(f"{body}{'' if body.rstrip().endswith(('.', '!', '?')) else '.'}{tag}" for body, tag in items)
@@ -147,7 +172,7 @@ class Bridge(QObject):
 
 
 class Window(QWidget):
-    def __init__(self, bridge: Bridge, ask):
+    def __init__(self, bridge: Bridge, ask, docs: list[Path | str] | None = None):
         super().__init__(None, Qt.WindowType.FramelessWindowHint | Qt.WindowType.WindowStaysOnTopHint
                          | Qt.WindowType.Tool)
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
@@ -155,6 +180,7 @@ class Window(QWidget):
         self.resize(430, 330)
         self.drag: QPoint | None = None
         self.ask = ask
+        self.docs = [Path(p) for p in docs] if docs else []
 
         panel = QFrame(self, objectName="panel")
         outer = QVBoxLayout(self)
@@ -273,12 +299,15 @@ class Window(QWidget):
 
     MAX_CARDS = 30  # older answers drop off; nothing is written to disk
 
+    def open_link(self, url: str) -> None:
+        QDesktopServices.openUrl(QUrl(url))
+
     def apply_theme(self) -> None:
         self.setStyleSheet(theme.fill(STYLE))
         theme.refresh_native(self)
         for card, (_, _, label, _) in getattr(self, "cards", {}).items():  # answers carry inline colours
             if self.plain.get(card):
-                label.setText(answer_html(self.plain[card]))
+                label.setText(answer_html(self.plain[card], self.docs))
 
     def on_card(self, card: int, question: str) -> None:
         if card not in self.cards:
@@ -289,8 +318,9 @@ class Window(QWidget):
             q, a, meta = (QLabel("", objectName="cardq", wordWrap=True), QLabel("", objectName="carda", wordWrap=True),
                           QLabel("", objectName="cardmeta"))
             a.setTextFormat(Qt.TextFormat.RichText)
-            for label in (q, a):  # text can be selected and copied
-                label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+            a.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse | Qt.TextInteractionFlag.LinksAccessibleByMouse)
+            a.linkActivated.connect(self.open_link)
+            q.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
             copy = QPushButton("Copy")
             copy.setCursor(Qt.CursorShape.PointingHandCursor)
             copy.clicked.connect(lambda _=False, c=card: self.copy_card(c))
@@ -311,7 +341,7 @@ class Window(QWidget):
 
     def on_answer(self, card: int, text: str) -> None:
         if card in self.cards:
-            self.cards[card][2].setText(answer_html(text))
+            self.cards[card][2].setText(answer_html(text, self.docs))
             self.plain[card] = text
 
     def copy_card(self, card: int) -> None:
@@ -562,7 +592,7 @@ def main(argv: list[str] | None = None) -> None:
             threading.Thread(target=run_answer, args=(holder["copilot"], bridge, new_card(), text, "",
                                                       time.perf_counter()), daemon=True).start()
 
-    window = Window(bridge, ask)
+    window = Window(bridge, ask, docs=args.docs)
     window.move(app.primaryScreen().availableGeometry().topRight() - QPoint(470, -40))
     window.show()
     import os
