@@ -135,7 +135,7 @@ def force_light_appearance() -> None:
         pass
 
 
-def configure_native_window(widget: QWidget, hide_from_capture: bool = True) -> bool:
+def _configure_macos(widget: QWidget, hide_from_capture: bool = True) -> bool:
     """Keep the window visible when another app is in front, on every Space and over full-screen apps,
     and (unless testing) out of screen sharing and screenshots. Returns whether it is hidden from capture."""
     try:
@@ -153,6 +153,37 @@ def configure_native_window(widget: QWidget, hide_from_capture: bool = True) -> 
         return window.sharingType() == NSWindowSharingNone
     except Exception:
         return False
+
+
+WDA_NONE = 0x0
+WDA_EXCLUDEFROMCAPTURE = 0x11  # Windows 10 version 2004 and later
+
+
+def _set_display_affinity(hwnd: int, flag: int) -> bool:
+    """Call SetWindowDisplayAffinity on a window handle. False if Windows refuses (for example before 10 2004)."""
+    import ctypes
+    user32 = ctypes.windll.user32
+    user32.SetWindowDisplayAffinity.argtypes = [ctypes.c_void_p, ctypes.c_uint32]
+    user32.SetWindowDisplayAffinity.restype = ctypes.c_int
+    return bool(user32.SetWindowDisplayAffinity(hwnd, flag))
+
+
+def _configure_windows(widget: QWidget, hide_from_capture: bool = True) -> bool:
+    """Exclude the window from screen capture on Windows. Returns whether it is hidden from capture."""
+    try:
+        flag = WDA_EXCLUDEFROMCAPTURE if hide_from_capture else WDA_NONE
+        done = _set_display_affinity(int(widget.winId()), flag)
+        return done and hide_from_capture
+    except Exception:
+        return False
+
+
+def configure_native_window(widget: QWidget, hide_from_capture: bool = True) -> bool:
+    """Set up the window for this platform and (unless testing) hide it from screen sharing and screenshots.
+    Returns whether it is hidden from capture."""
+    if sys.platform == "win32":
+        return _configure_windows(widget, hide_from_capture)
+    return _configure_macos(widget, hide_from_capture)
 
 
 class Bridge(QObject):
