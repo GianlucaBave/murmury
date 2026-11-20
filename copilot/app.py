@@ -29,6 +29,7 @@ from . import theme
 from .chrome import AppearanceButton, TrafficLights
 from .hotkeys import HotKeyError, HotKeys
 from .pipeline import respond
+from .setup import settings_store
 
 JOIN_SECONDS = 6.0  # a line this soon after the last one continues the same question
 
@@ -44,6 +45,12 @@ QScrollArea, #cards { background: transparent; border: none; }
 #cardq { color: $secondary; font-size: 12px; font-weight: 400; border-left: 2px solid $quote_bar; padding-left: 8px; }
 #carda { color: $text; font-size: 14px; }
 #cardmeta { color: $tertiary; font-size: 11px; }
+#notice { background: $card; border: 1px solid $card_border; border-radius: 6px; }
+#noticetext { color: $secondary; font-size: 11px; }
+#noticelink { color: $link; font-size: 11px; padding: 0 2px; }
+#noticelink:hover { color: $link_hover; }
+#noticeclose { color: $tertiary; font-size: 12px; padding: 0 2px; }
+#noticeclose:hover { color: $text; }
 QLineEdit { background: $input; border: 1px solid $input_border; border-radius: 6px; color: $text; padding: 4px 8px; }
 QPushButton { background: transparent; border: none; color: $secondary; font-size: 13px; padding: 0 4px; }
 QPushButton:hover { color: $link; }
@@ -201,6 +208,25 @@ class Window(QWidget):
         keys.addWidget(copy_all)
         keys.addWidget(QSizeGrip(panel), 0, Qt.AlignmentFlag.AlignBottom | Qt.AlignmentFlag.AlignRight)
         box.addWidget(self.heard)
+        # notice: reminder to tell others that Murmury is transcribing
+        self.notice = QFrame(objectName="notice")
+        nrow = QHBoxLayout(self.notice)
+        nrow.setContentsMargins(8, 4, 8, 4)
+        nrow.setSpacing(6)
+        self.notice_text = QLabel("Let the others on the call know Murmury is transcribing.", objectName="noticetext")
+        self.notice_dont_show = QPushButton("Don't show again", objectName="noticelink")
+        self.notice_dont_show.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.notice_dont_show.clicked.connect(self.dismiss_notice_permanently)
+        self.notice_close = QPushButton("✕", objectName="noticeclose")
+        self.notice_close.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.notice_close.clicked.connect(self.dismiss_notice_session)
+        nrow.addWidget(self.notice_text, 1)
+        nrow.addWidget(self.notice_dont_show)
+        nrow.addWidget(self.notice_close)
+        box.addWidget(self.notice)
+        self._notice_session_closed = False
+        dismissed = settings_store().value("transcription_notice_dismissed") == "true"
+        self.notice.setVisible(not dismissed)
         box.addWidget(self.scroll, 1)
         box.addWidget(self.input)
         self.keys = QWidget()
@@ -224,6 +250,14 @@ class Window(QWidget):
         bridge.meta.connect(self.on_meta)
         bridge.timing.connect(self.set_status)
 
+    def dismiss_notice_session(self) -> None:
+        self._notice_session_closed = True
+        self.notice.setVisible(False)
+
+    def dismiss_notice_permanently(self) -> None:
+        settings_store().setValue("transcription_notice_dismissed", "true")
+        self.notice.setVisible(False)
+
     def set_warning(self, warning: str) -> None:
         self.warning_text = warning
         if warning:
@@ -233,12 +267,18 @@ class Window(QWidget):
         if self.warning_text:
             status = f"{status} | {self.warning_text}"
         self.bar.setText(status)
+        if "Listening" in status and not self._notice_session_closed and not self.compact:
+            dismissed = settings_store().value("transcription_notice_dismissed") == "true"
+            if not dismissed:
+                self.notice.setVisible(True)
 
     def toggle_compact(self) -> None:
         """Yellow: fold to the status bar only (a floating panel cannot go to the Dock); again to unfold."""
         self.compact = not self.compact
+        dismissed = settings_store().value("transcription_notice_dismissed") == "true"
         for w in (self.heard, self.scroll, self.keys):
             w.setVisible(not self.compact)
+        self.notice.setVisible(not self.compact and not self._notice_session_closed and not dismissed)
         if self.compact:
             self.normal_size = self.size()
             self.setMinimumHeight(0)
