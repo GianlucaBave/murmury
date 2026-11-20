@@ -65,6 +65,7 @@ recording permission, which is how the app hears the call's audio.
 | `copilot/setup.py`, `copilot/app.py` | setup window and floating answer window |
 | `evals/run.py` | answer-quality bench |
 | `scripts/check_hidden.py` | proves the window stays out of screen capture |
+| `scripts/check_hidden_windows.py` | the same check on Windows |
 
 ## Before you open a pull request
 
@@ -72,7 +73,7 @@ recording permission, which is how the app hears the call's audio.
 - If you touch the answer instructions, run the bench on your own cases and put the before and after scores
   in the pull request: `uv run python -m evals.run path/to/cases.json` (`evals/cases.example.json` shows the
   format; a run costs a few cents to a few tens of cents of API usage).
-- If you touch the floating window, run `uv run python scripts/check_hidden.py` and say what it printed.
+- If you touch the floating window, run `uv run python scripts/check_hidden.py` on a Mac, or `uv run --with pillow python scripts/check_hidden_windows.py` on Windows, and say what it printed.
 - Never commit API keys, your own documents or call transcripts.
 
 ## Where to start
