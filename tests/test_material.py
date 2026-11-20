@@ -87,6 +87,183 @@ def test_pptx_uses_declared_slide_order_and_includes_notes(tmp_path):
     assert as_prompt(load([path])) == as_prompt(load([path]))
 
 
+def test_pptx_slide_with_no_text_still_gives_slide_marker(tmp_path):
+    path = tmp_path / "empty_slide.pptx"
+    empty_slide = (
+        f'<p:sld xmlns:p="{P}" xmlns:a="{A}"><p:cSld><p:spTree><p:sp><p:txBody>'
+        f"<a:p/>"
+        "</p:txBody></p:sp></p:spTree></p:cSld></p:sld>"
+    )
+    _archive(
+        path,
+        {
+            "ppt/presentation.xml": f"""<p:presentation xmlns:p="{P}" xmlns:r="{R}">
+              <p:sldIdLst><p:sldId id="1" r:id="rId1"/></p:sldIdLst>
+            </p:presentation>""",
+            "ppt/_rels/presentation.xml.rels": f"""<Relationships xmlns="{REL}">
+              <Relationship Id="rId1" Type="slide" Target="slides/slide1.xml"/>
+            </Relationships>""",
+            "ppt/slides/slide1.xml": empty_slide,
+        },
+    )
+
+    [source] = load([path])
+
+    assert source.kind == "pptx"
+    assert source.text == "[slide 1]"
+    assert source.warning is None
+
+
+def test_pptx_missing_relationship_skips_slide_preserving_subsequent_numbers(tmp_path):
+    path = tmp_path / "missing_rel.pptx"
+    slide = lambda text: (
+        f'<p:sld xmlns:p="{P}" xmlns:a="{A}"><p:cSld><p:spTree><p:sp><p:txBody>'
+        f"<a:p><a:r><a:t>{text}</a:t></a:r></a:p>"
+        "</p:txBody></p:sp></p:spTree></p:cSld></p:sld>"
+    )
+    _archive(
+        path,
+        {
+            "ppt/presentation.xml": f"""<p:presentation xmlns:p="{P}" xmlns:r="{R}">
+              <p:sldIdLst>
+                <p:sldId id="1" r:id="rId1"/>
+                <p:sldId id="2" r:id="rIdMissing"/>
+                <p:sldId id="3" r:id="rId3"/>
+              </p:sldIdLst>
+            </p:presentation>""",
+            "ppt/_rels/presentation.xml.rels": f"""<Relationships xmlns="{REL}">
+              <Relationship Id="rId1" Type="slide" Target="slides/slide1.xml"/>
+              <Relationship Id="rId3" Type="slide" Target="slides/slide3.xml"/>
+            </Relationships>""",
+            "ppt/slides/slide1.xml": slide("Slide One"),
+            "ppt/slides/slide3.xml": slide("Slide Three"),
+        },
+    )
+
+    [source] = load([path])
+
+    assert source.kind == "pptx"
+    assert source.text == "[slide 1]\nSlide One\n\n[slide 3]\nSlide Three"
+
+
+def test_pptx_relationship_target_starting_with_slash_is_found(tmp_path):
+    path = tmp_path / "absolute_target.pptx"
+    slide = lambda text: (
+        f'<p:sld xmlns:p="{P}" xmlns:a="{A}"><p:cSld><p:spTree><p:sp><p:txBody>'
+        f"<a:p><a:r><a:t>{text}</a:t></a:r></a:p>"
+        "</p:txBody></p:sp></p:spTree></p:cSld></p:sld>"
+    )
+    _archive(
+        path,
+        {
+            "ppt/presentation.xml": f"""<p:presentation xmlns:p="{P}" xmlns:r="{R}">
+              <p:sldIdLst><p:sldId id="1" r:id="rId1"/></p:sldIdLst>
+            </p:presentation>""",
+            "ppt/_rels/presentation.xml.rels": f"""<Relationships xmlns="{REL}">
+              <Relationship Id="rId1" Type="slide" Target="/ppt/slides/slide1.xml"/>
+            </Relationships>""",
+            "ppt/slides/slide1.xml": slide("Absolute path target"),
+        },
+    )
+
+    [source] = load([path])
+
+    assert source.kind == "pptx"
+    assert source.text == "[slide 1]\nAbsolute path target"
+
+
+def test_pptx_notes_with_only_date_or_footer_add_no_notes_block(tmp_path):
+    path = tmp_path / "date_footer_notes.pptx"
+    slide = lambda text: (
+        f'<p:sld xmlns:p="{P}" xmlns:a="{A}"><p:cSld><p:spTree><p:sp><p:txBody>'
+        f"<a:p><a:r><a:t>{text}</a:t></a:r></a:p>"
+        "</p:txBody></p:sp></p:spTree></p:cSld></p:sld>"
+    )
+    notes = f"""<p:notes xmlns:p="{P}" xmlns:a="{A}"><p:cSld>
+      <p:sp><p:nvSpPr><p:nvPr><p:ph type="dt"/></p:nvPr></p:nvSpPr><p:txBody>
+        <a:p><a:r><a:t>2026-11-20</a:t></a:r></a:p>
+      </p:txBody></p:sp>
+      <p:sp><p:nvSpPr><p:nvPr><p:ph type="ftr"/></p:nvPr></p:nvSpPr><p:txBody>
+        <a:p><a:r><a:t>Confidential</a:t></a:r></a:p>
+      </p:txBody></p:sp>
+    </p:cSld></p:notes>"""
+    _archive(
+        path,
+        {
+            "ppt/presentation.xml": f"""<p:presentation xmlns:p="{P}" xmlns:r="{R}">
+              <p:sldIdLst><p:sldId id="1" r:id="rId1"/></p:sldIdLst>
+            </p:presentation>""",
+            "ppt/_rels/presentation.xml.rels": f"""<Relationships xmlns="{REL}">
+              <Relationship Id="rId1" Type="slide" Target="slides/slide1.xml"/>
+            </Relationships>""",
+            "ppt/slides/slide1.xml": slide("Slide content"),
+            "ppt/slides/_rels/slide1.xml.rels": f"""<Relationships xmlns="{REL}">
+              <Relationship Id="notes" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/notesSlide" Target="../notesSlides/notesSlide1.xml"/>
+            </Relationships>""",
+            "ppt/notesSlides/notesSlide1.xml": notes,
+        },
+    )
+
+    [source] = load([path])
+
+    assert source.kind == "pptx"
+    assert source.text == "[slide 1]\nSlide content"
+    assert "[notes]" not in source.text
+    assert "Confidential" not in source.text
+    assert "2026-11-20" not in source.text
+
+
+def test_pptx_slide_without_relationship_file_has_no_notes(tmp_path):
+    path = tmp_path / "no_slide_rels.pptx"
+    slide = lambda text: (
+        f'<p:sld xmlns:p="{P}" xmlns:a="{A}"><p:cSld><p:spTree><p:sp><p:txBody>'
+        f"<a:p><a:r><a:t>{text}</a:t></a:r></a:p>"
+        "</p:txBody></p:sp></p:spTree></p:cSld></p:sld>"
+    )
+    _archive(
+        path,
+        {
+            "ppt/presentation.xml": f"""<p:presentation xmlns:p="{P}" xmlns:r="{R}">
+              <p:sldIdLst><p:sldId id="1" r:id="rId1"/></p:sldIdLst>
+            </p:presentation>""",
+            "ppt/_rels/presentation.xml.rels": f"""<Relationships xmlns="{REL}">
+              <Relationship Id="rId1" Type="slide" Target="slides/slide1.xml"/>
+            </Relationships>""",
+            "ppt/slides/slide1.xml": slide("Slide without notes rels"),
+        },
+    )
+
+    [source] = load([path])
+
+    assert source.kind == "pptx"
+    assert source.text == "[slide 1]\nSlide without notes rels"
+    assert "[notes]" not in source.text
+
+
+def test_pptx_without_presentation_relationships_produces_warning(tmp_path):
+    path = tmp_path / "no_rels.pptx"
+    slide = lambda text: (
+        f'<p:sld xmlns:p="{P}" xmlns:a="{A}"><p:cSld><p:spTree><p:sp><p:txBody>'
+        f"<a:p><a:r><a:t>{text}</a:t></a:r></a:p>"
+        "</p:txBody></p:sp></p:spTree></p:cSld></p:sld>"
+    )
+    _archive(
+        path,
+        {
+            "ppt/presentation.xml": f"""<p:presentation xmlns:p="{P}" xmlns:r="{R}">
+              <p:sldIdLst><p:sldId id="1" r:id="rId1"/></p:sldIdLst>
+            </p:presentation>""",
+            "ppt/slides/slide1.xml": slide("Orphan slide"),
+        },
+    )
+
+    [source] = load([path])
+
+    assert source.kind == "pptx"
+    assert source.text == ""
+    assert source.warning == "no text found"
+
+
 def test_text_file_in_cp1252_loads_without_losing_accents(tmp_path):
     notes = tmp_path / "notes.txt"
     notes.write_bytes(b"Caf\xe9 notes\n")
