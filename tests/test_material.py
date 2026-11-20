@@ -19,6 +19,18 @@ def _archive(path: Path, members: dict[str, str]) -> None:
             archive.writestr(name, contents)
 
 
+def _docx(path: Path, body: str) -> None:
+    _archive(
+        path,
+        {
+            "word/document.xml": (
+                f'<w:document xmlns:w="{W}">'
+                f"<w:body>{body}</w:body></w:document>"
+            ),
+        },
+    )
+
+
 def test_docx_keeps_paragraphs_and_tables_in_document_order(tmp_path):
     path = tmp_path / "brief.docx"
     _archive(
@@ -40,6 +52,149 @@ def test_docx_keeps_paragraphs_and_tables_in_document_order(tmp_path):
     assert source.kind == "docx"
     assert source.text == "Opening\n\nMetric | Value\n\nConclusion"
     assert as_prompt(load([path])) == as_prompt(load([path]))
+
+
+# Test 1: Tab preservation
+
+def test_docx_preserves_tabs_between_words(tmp_path):
+    path = tmp_path / "brief.docx"
+
+    _docx(
+        path,
+        '<w:p><w:r><w:t>Name</w:t><w:tab/><w:t>Value</w:t></w:r></w:p>',
+    )
+
+    [source] = load([path])
+
+    assert source.text == "Name\tValue"
+    assert source.warning is None
+
+
+# Test 2: Line breaks
+
+def test_docx_line_breaks_inside_paragraph(tmp_path):
+    path = tmp_path / "brief.docx"
+
+    _docx(
+        path,
+        '<w:p><w:r><w:t>First</w:t><w:br/>'
+        '<w:t>Second</w:t><w:cr/><w:t>Third</w:t></w:r></w:p>',
+    )
+
+    [source] = load([path])
+
+    assert source.text == "First\nSecond\nThird"
+    assert source.warning is None
+
+
+# Test 3: Empty paragraphs and whitespace trimming
+
+def test_docx_drops_empty_paragraphs_and_trims_spaces(tmp_path):
+    path = tmp_path / "brief.docx"
+
+    _docx(
+        path,
+        '<w:p><w:r><w:t>A</w:t></w:r></w:p>'
+        '<w:p/>'
+        '<w:p><w:r><w:t xml:space="preserve">   </w:t></w:r></w:p>'
+        '<w:p><w:r><w:t xml:space="preserve">  B  </w:t></w:r></w:p>',
+    )
+
+    [source] = load([path])
+
+    assert source.text == "A\n\nB"
+    assert source.warning is None
+
+
+# Test 4: Multiple paragraphs inside a table cell
+
+def test_docx_multiple_paragraphs_inside_table_cell(tmp_path):
+    path = tmp_path / "brief.docx"
+
+    _docx(
+        path,
+        '<w:tbl><w:tr>'
+        '<w:tc>'
+        '<w:p><w:r><w:t>First</w:t></w:r></w:p>'
+        '<w:p><w:r><w:t>Second</w:t></w:r></w:p>'
+        '</w:tc>'
+        '<w:tc><w:p><w:r><w:t>Other</w:t></w:r></w:p></w:tc>'
+        '</w:tr></w:tbl>',
+    )
+
+    [source] = load([path])
+
+    assert source.text == "First Second | Other"
+    assert source.warning is None
+
+
+# Test 5A: Empty table rows must be ignored
+
+def test_docx_drops_table_rows_with_no_text(tmp_path):
+    path = tmp_path / "brief.docx"
+
+    _docx(
+        path,
+        '<w:p><w:r><w:t>Header</w:t></w:r></w:p>'
+        '<w:tbl><w:tr>'
+        '<w:tc><w:p><w:r><w:t>Q1</w:t></w:r></w:p></w:tc>'
+        '<w:tc><w:p><w:r><w:t>10</w:t></w:r></w:p></w:tc>'
+        '</w:tr><w:tr>'
+        '<w:tc><w:p/></w:tc>'
+        '<w:tc><w:p><w:r><w:t xml:space="preserve">  </w:t></w:r></w:p></w:tc>'
+        '</w:tr><w:tr>'
+        '<w:tc><w:p><w:r><w:t>Q3</w:t></w:r></w:p></w:tc>'
+        '<w:tc><w:p><w:r><w:t>30</w:t></w:r></w:p></w:tc>'
+        '</w:tr></w:tbl>'
+        '<w:p><w:r><w:t>Footer</w:t></w:r></w:p>',
+    )
+
+    [source] = load([path])
+
+    assert source.text == "Header\n\nQ1 | 10\nQ3 | 30\n\nFooter"
+    assert source.warning is None
+
+
+# Test 5B: An empty table must not add a block
+
+def test_docx_empty_table_adds_no_block(tmp_path):
+    path = tmp_path / "brief.docx"
+
+    _docx(
+        path,
+        '<w:p><w:r><w:t>A</w:t></w:r></w:p>'
+        '<w:tbl><w:tr>'
+        '<w:tc><w:p/></w:tc>'
+        '</w:tr></w:tbl>'
+        '<w:p><w:r><w:t>B</w:t></w:r></w:p>',
+    )
+
+    [source] = load([path])
+
+    assert source.text == "A\n\nB"
+    assert source.warning is None
+
+
+# Test 6: Empty Word document warning
+
+def test_docx_empty_body_produces_no_text_warning(tmp_path):
+    path = tmp_path / "empty.docx"
+
+    _archive(
+        path,
+        {
+            "word/document.xml": (
+                f'<w:document xmlns:w="{W}"><w:body/>'
+                '</w:document>'
+            ),
+        },
+    )
+
+    [source] = load([path])
+
+    assert source.kind == "docx"
+    assert source.text == ""
+    assert source.warning == "no text found"
 
 
 def test_pptx_uses_declared_slide_order_and_includes_notes(tmp_path):
