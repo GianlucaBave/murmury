@@ -21,6 +21,13 @@ The tests run on macOS, Windows and Linux, so most level 1 issues need no Mac (e
    ```
 
    (Fork the repository on GitHub first, and clone your fork.)
+
+   On Debian or Ubuntu, the Qt widget tests also need a few system libraries that a minimal install
+   doesn't have (checked on Ubuntu 24.04 and 26.04):
+
+   ```bash
+   sudo apt install libglib2.0-0t64 libgl1 libegl1 libxkbcommon0 libfontconfig1 libdbus-1-3
+   ```
 3. **Run the tests.** They should all pass before you change anything:
 
    ```bash
