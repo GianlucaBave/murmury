@@ -4,6 +4,8 @@ __pycache__/
 *.pyc
 .DS_Store
 audiotap/audiotap
+audiotap/audiotap.exe
+audiotap-check.wav
 dist/
 build/
 *.dmg
