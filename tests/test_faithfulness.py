@@ -85,6 +85,87 @@ def test_check_source(answer, ok):
     assert f.check_source(answer, "product-a.md", SHEET_A) is ok
 
 
+# -- check 2: the word helpers and the four-word quote ---------------------------------------
+
+
+@pytest.mark.parametrize("text, expected", [
+    ("ABC", "abc"),                                        # lower case
+    ("It's", "it's"),                                      # straight apostrophe unchanged
+    ("It\u2019s", "it's"),                                  # curly apostrophe U+2019 becomes straight
+    ("It\u2018s", "it's"),                                  # curly apostrophe U+2018 becomes straight
+    ("IT'S", "it's"),                                      # both upper and apostrophe
+    ("Don\u2019t", "don't"),                                # curly apostrophe in word
+    ("Hello World", "hello world"),                          # two words
+])
+def test_normal(text, expected):
+    assert f._normal(text) == expected
+
+
+@pytest.mark.parametrize("text, expected", [
+    ("don't", ["don", "t"]),                                  # apostrophe splits the word
+    ("**Price** is $120.00, total.", ["price", "is", "$120.00,", "total."]),
+    ("Hello, world.", ["hello,", "world."]),                 # punctuation within pattern stays until clean
+    ("The price: $120.00", ["the", "price", "$120.00"]),      # colon not in pattern, splits word
+    ("***Test***", ["test"]),                                  # asterisks become spaces, then removed
+])
+def test_words(text, expected):
+    assert f._words(text) == expected
+
+
+@pytest.mark.parametrize("words, expected", [
+    (["price", "is", "$120.00,", "total."], ["price", "is", "$120.00", "total"]),  # trailing dots/commas stripped
+    (["1,200."], ["1,200"]),                                    # inner comma kept, trailing dot stripped
+    (["..."], []),                                             # word of only dots/commas drops
+    (["$120"], ["$120"]),                                      # dollar sign kept
+    (["$", "100"], ["$", "100"]),                              # dollar alone kept, no strip
+    (["hello,", "world."], ["hello", "world"]),               # trailing dots/commas stripped
+    (["don", "t"], ["don", "t"]),                             # apostrophe split words unchanged
+])
+def test_clean(words, expected):
+    assert f._clean(words) == expected
+
+
+INLINE_SHEET = """# Title
+The quick brown fox jumps over the lazy dog.
+"""
+
+
+@pytest.mark.parametrize("answer, ok", [
+    ("lumo l2 desk lamp", True),  # four words in a row: a quote
+    ("m quick start card", True),  # the last four words of the sheet ("1.5 m" / "Quick start card")
+    ("lumo l2 desk", False),  # three words in a row: not enough
+    ("lumo desk lamp l2", False),  # the same words in another order
+    ("lumo is a lamp", False),  # words from the sheet, but not in a row
+    ("This is a product. lumo l2 desk lamp.", True),  # four-word run at end
+    ("lumo l2 desk lamp is a product.", True),  # four-word run at beginning
+    ("This lumo l2 desk lamp is fine.", True),  # four-word run in middle
+    ("lumo, l2; desk. lamp!", True),  # punctuation doesn't block match
+    ("Lumo L2 Desk Lamp.", True),  # case doesn't matter, trailing dot stripped
+    ("is a **dimmable** LED desk lamp", True),  # bold markers inside quoted run
+])
+def test_check_source_quote_matching(answer, ok):
+    assert f.check_source(answer, "product-a.md", SHEET_A) is ok
+
+
+def test_check_source_quote_matching_inline_sheet():
+    """Using INLINE_SHEET to test 3 vs 4 word boundary."""
+    # Four consecutive words from INLINE_SHEET pass
+    assert f.check_source("quick brown fox jumps", "sheet.md", INLINE_SHEET)
+    # Three consecutive words from INLINE_SHEET don't pass (no tag)
+    assert not f.check_source("quick brown fox", "sheet.md", INLINE_SHEET)
+
+
+def test_check_source_bold_markers_and_curly_apostrophe_match():
+    """Bold markers and curly apostrophe in answer don't stop a quote from matching."""
+    sheet = """# Title
+Don't touch the hot bulb.
+"""
+    assert not f.check_source("don't touch", "sheet.md", sheet)  # 3 words, not a quote
+    assert f.check_source("don't touch the", "sheet.md", sheet)  # 4 words from sheet
+    assert f.check_source("**Don't** touch the", "sheet.md", sheet)  # bold with apostrophe
+    assert f.check_source("Don\u2019t touch the", "sheet.md", sheet)  # curly apostrophe
+
+
 # -- check 3: the warranty is not in the document -----------------------------------------------
 
 
