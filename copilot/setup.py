@@ -411,6 +411,14 @@ def settings_store() -> QSettings:
     return settings
 
 
+def answered_calls(settings: QSettings) -> int:
+    """How many calls Murmury answered something in; 0 if the stored value is missing or not a number."""
+    try:
+        return int(settings.value("answered_calls", 0) or 0)
+    except (TypeError, ValueError):
+        return 0
+
+
 TOUR = [
     ("Your calls", "Each call keeps its documents, description and settings, so you can open it again before "
                    "the next meeting. Press + to start one. It is kept by itself, no save button."),
@@ -935,7 +943,7 @@ class SetupDialog(QDialog):
                                             objectName="muted", alignment=Qt.AlignmentFlag.AlignCenter))
             self.call_list.addStretch(2)
             return
-        if int(self.settings.value("answered_calls", 0) or 0) >= 1 and self.settings.value("star_asked") != "true":
+        if answered_calls(self.settings) >= 1 and self.settings.value("star_asked") != "true":
             self.call_list.addWidget(self.star_banner())
         for call in calls:
             row = CallRow(call)

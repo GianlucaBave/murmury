@@ -701,9 +701,9 @@ def register_global_hotkeys(window: Window, bridge: Bridge) -> HotKeys:
 def count_answered_call() -> None:
     """One more call in which Murmury answered something (the setup screen asks for a star after the first)."""
     if ANSWERED.is_set():
-        from .setup import settings_store
+        from .setup import answered_calls, settings_store
         settings = settings_store()
-        settings.setValue("answered_calls", int(settings.value("answered_calls", 0) or 0) + 1)
+        settings.setValue("answered_calls", answered_calls(settings) + 1)
 
 
 if __name__ == "__main__":
