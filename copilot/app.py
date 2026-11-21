@@ -13,7 +13,7 @@ import re
 import sys
 import threading
 import time
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 from PySide6.QtCore import QObject, QPoint, QRect, Qt, QUrl, Signal
 from PySide6.QtGui import QDesktopServices, QFont, QKeySequence, QShortcut
@@ -50,6 +50,20 @@ QPushButton:hover { color: $link; }
 """
 
 REF = re.compile(r"\[([^\]]{1,60})\]\s*$")
+SOURCE_LINK = re.compile(r"murmury-source:(\d+)\Z")
+
+
+def source_index(reference: str, paths: list[Path]) -> int | None:
+    """Resolve a citation only when its document is unambiguous."""
+    if len(paths) == 1:
+        return 0
+    for index, path in enumerate(paths):
+        name = PurePosixPath(str(path).replace("\\", "/")).name
+        if reference.casefold().startswith(name.casefold()):
+            boundary = reference[len(name):len(name) + 1]
+            if not boundary or boundary in " ,:!#[":
+                return index
+    return None
 
 
 MAX_LINES = 3  # fact lines a card shows under the SAY line: the answer style's limit, set at start
@@ -77,7 +91,7 @@ def card_lines(text: str) -> list[str]:
     return lines
 
 
-def answer_html(text: str) -> str:
+def answer_html(text: str, source_paths: list[Path] | None = None) -> str:
     """The SAY line large and bold; the facts as bullets with their source as a small tag."""
     c = theme.palette()
     head, items = "", []
@@ -96,8 +110,14 @@ def answer_html(text: str) -> str:
         rest = html.escape(rest, quote=False)
         rest = re.sub(r"([€$£]?\d[\d.,]*\s?(?:%|×|(?:x|m|bn|k|million|billion)\b)?)", rf'<b style="color:{c["text"]};">\1</b>', rest, count=1)
         body = (f'<b style="color:{c["text"]};">{html.escape(label.group(1), quote=False)}:</b> ' if label else "") + rest
-        tag = (f' <span style="color:{c['tag_fg']}; background:{c['tag_bg']}; font-size:11px;">&nbsp;{html.escape(ref.group(1), quote=False)}&nbsp;</span>'
-               if ref else "")
+        index = source_index(ref.group(1), source_paths or []) if ref else None
+        tag_text = (f'&nbsp;{html.escape(ref.group(1), quote=False)}&nbsp;' if ref else "")
+        if index is not None:
+            tag = (f' <a href="murmury-source:{index}" style="color:{c["link"]}; text-decoration:underline;">'
+                   f'<span style="background:{c["tag_bg"]}; font-size:11px;">{tag_text}</span></a>')
+        else:
+            tag = (f' <span style="color:{c["tag_fg"]}; background:{c["tag_bg"]}; font-size:11px;">{tag_text}</span>'
+                   if ref else "")
         items.append((body, tag))
     if FORMAT == "script":  # one paragraph, read on from the SAY line
         text = " ".join(f"{body}{'' if body.rstrip().endswith(('.', '!', '?')) else '.'}{tag}" for body, tag in items)
@@ -115,7 +135,7 @@ def force_light_appearance() -> None:
         pass
 
 
-def configure_native_window(widget: QWidget, hide_from_capture: bool = True) -> bool:
+def _configure_macos(widget: QWidget, hide_from_capture: bool = True) -> bool:
     """Keep the window visible when another app is in front, on every Space and over full-screen apps,
     and (unless testing) out of screen sharing and screenshots. Returns whether it is hidden from capture."""
     try:
@@ -135,6 +155,37 @@ def configure_native_window(widget: QWidget, hide_from_capture: bool = True) -> 
         return False
 
 
+WDA_NONE = 0x0
+WDA_EXCLUDEFROMCAPTURE = 0x11  # Windows 10 version 2004 and later
+
+
+def _set_display_affinity(hwnd: int, flag: int) -> bool:
+    """Call SetWindowDisplayAffinity on a window handle. False if Windows refuses (for example before 10 2004)."""
+    import ctypes
+    user32 = ctypes.windll.user32
+    user32.SetWindowDisplayAffinity.argtypes = [ctypes.c_void_p, ctypes.c_uint32]
+    user32.SetWindowDisplayAffinity.restype = ctypes.c_int
+    return bool(user32.SetWindowDisplayAffinity(hwnd, flag))
+
+
+def _configure_windows(widget: QWidget, hide_from_capture: bool = True) -> bool:
+    """Exclude the window from screen capture on Windows. Returns whether it is hidden from capture."""
+    try:
+        flag = WDA_EXCLUDEFROMCAPTURE if hide_from_capture else WDA_NONE
+        done = _set_display_affinity(int(widget.winId()), flag)
+        return done and hide_from_capture
+    except Exception:
+        return False
+
+
+def configure_native_window(widget: QWidget, hide_from_capture: bool = True) -> bool:
+    """Set up the window for this platform and (unless testing) hide it from screen sharing and screenshots.
+    Returns whether it is hidden from capture."""
+    if sys.platform == "win32":
+        return _configure_windows(widget, hide_from_capture)
+    return _configure_macos(widget, hide_from_capture)
+
+
 class Bridge(QObject):
     status = Signal(str)
     warning = Signal(str)
@@ -144,6 +195,7 @@ class Bridge(QObject):
     meta = Signal(int, str)  # the card's timing line
     timing = Signal(str)  # status bar after an answer
     hotkey = Signal(str)  # a global hotkey was pressed: "ask" or "clear"
+    sources = Signal(object)  # selected document paths, used to resolve source tags
 
 
 class Window(QWidget):
@@ -177,6 +229,7 @@ class Window(QWidget):
         self.resize(430, 330)
         self.drag: QPoint | None = None
         self.ask = ask
+        self.source_paths: list[Path] = []
         self.restore_window_position()
 
         panel = QFrame(self, objectName="panel")
@@ -246,6 +299,10 @@ class Window(QWidget):
         bridge.answer.connect(self.on_answer)
         bridge.meta.connect(self.on_meta)
         bridge.timing.connect(self.set_status)
+        bridge.sources.connect(self.set_source_paths)
+
+    def set_source_paths(self, paths: list[Path]) -> None:
+        self.source_paths = [Path(path) for path in paths]
 
     def set_warning(self, warning: str) -> None:
         self.warning_text = warning
@@ -301,7 +358,7 @@ class Window(QWidget):
         theme.refresh_native(self)
         for card, (_, _, label, _) in getattr(self, "cards", {}).items():  # answers carry inline colours
             if self.plain.get(card):
-                label.setText(answer_html(self.plain[card]))
+                label.setText(answer_html(self.plain[card], self.source_paths))
 
     def on_card(self, card: int, question: str) -> None:
         if card not in self.cards:
@@ -314,6 +371,10 @@ class Window(QWidget):
             a.setTextFormat(Qt.TextFormat.RichText)
             for label in (q, a):  # text can be selected and copied
                 label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+            a.setTextInteractionFlags(Qt.TextInteractionFlag.TextBrowserInteraction
+                                      | Qt.TextInteractionFlag.TextSelectableByMouse)
+            a.setOpenExternalLinks(False)
+            a.linkActivated.connect(self.open_source)
             copy = QPushButton("Copy")
             copy.setCursor(Qt.CursorShape.PointingHandCursor)
             copy.clicked.connect(lambda _=False, c=card: self.copy_card(c))
@@ -334,8 +395,23 @@ class Window(QWidget):
 
     def on_answer(self, card: int, text: str) -> None:
         if card in self.cards:
-            self.cards[card][2].setText(answer_html(text))
+            self.cards[card][2].setText(answer_html(text, self.source_paths))
             self.plain[card] = text
+
+    def open_source(self, link: str) -> None:
+        """Open a selected source file without trusting a model-provided filesystem path."""
+        match = SOURCE_LINK.fullmatch(link)
+        if not match:
+            return
+        index = int(match.group(1))
+        if index >= len(self.source_paths):
+            return
+        path = self.source_paths[index]
+        if not path.is_file():
+            self.set_status(f"Source file is no longer available: {path.name}")
+            return
+        if not QDesktopServices.openUrl(QUrl.fromLocalFile(str(path))):
+            self.set_status(f"Could not open {path.name}")
 
     def copy_card(self, card: int) -> None:
         if card in self.cards:
@@ -439,6 +515,7 @@ def run_answer(copilot: PreparedCopilot, bridge: Bridge, card: int, line: str, b
 def start(copilot_ready: threading.Event, holder: dict, bridge: Bridge, args) -> None:
     bridge.status.emit("Loading documents…")
     sources = material.load([Path(p) for p in args.docs])
+    bridge.sources.emit([Path(p) for p in args.docs])
 
     warnings = [
         f"{source.name}: {source.warning}"

@@ -16,9 +16,10 @@ from pathlib import Path
 
 import numpy as np
 
+from .stt import transcribe
+
 SAMPLE_RATE = 16_000
 FRAME = 480  # 30 ms
-MODEL = "mlx-community/whisper-large-v3-turbo"
 # inside the packaged app the helper sits in the bundle's resources; from source, next to the code
 _ROOT = Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parent.parent))
 AUDIOTAP = _ROOT / "audiotap" / "audiotap"
@@ -58,33 +59,6 @@ class Segmenter:
                 self.frames, self.quiet = [], 0
                 if len(speech) >= self.min_frames:
                     yield np.concatenate(speech)
-
-
-def _skip_word_timing() -> None:
-    """mlx-whisper imports numba and scipy only for word-level timestamps, which this tool never asks for.
-    A stand-in module keeps them (and about 160 MB) out of the packaged app."""
-    if "mlx_whisper.timing" in sys.modules:
-        return
-    import types
-
-    stub = types.ModuleType("mlx_whisper.timing")
-
-    def add_word_timestamps(*args, **kwargs):
-        raise RuntimeError("word timestamps are not included in Murmury")
-
-    stub.add_word_timestamps = add_word_timestamps
-    sys.modules["mlx_whisper.timing"] = stub
-
-
-def transcribe(audio: np.ndarray, vocabulary: str = "") -> str:
-    """`vocabulary`: names and terms the model would otherwise mishear, comma separated
-    (without it, an uncommon company name came out as a common word in testing)."""
-    _skip_word_timing()
-    import mlx_whisper  # heavy import, kept out of module load
-
-    result = mlx_whisper.transcribe(audio, path_or_hf_repo=MODEL, condition_on_previous_text=False,
-                                    initial_prompt=vocabulary or None)
-    return result["text"].strip()
 
 
 def warm_up() -> None:

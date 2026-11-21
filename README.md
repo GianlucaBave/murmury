@@ -352,6 +352,11 @@ trying it with a service other than Anthropic and reporting what breaks
 `copilot/answer.py` and measuring the change with `evals/run.py` on your own cases
 (`evals/cases.example.json` shows the format).
 
+**Learn by contributing.** Students and newcomers: [LEARNING.md](LEARNING.md) is a path through the real
+code in four tracks (tests, answer evals, desktop features, the Windows port), each with what you learn,
+the files to read first and the open issues to start from. Most level 1 issues need no Mac.
+Instructors: [TEACHING.md](TEACHING.md) explains how to bring a class.
+
 ## License
 
 GPL-3.0: use it, change it, share it; any version you distribute stays open source. See [LICENSE](LICENSE).

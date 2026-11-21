@@ -152,3 +152,16 @@ def test_answers_use_the_given_address():
     copilot = OpenAICopilot("doc", "a call", service, "local", "gemma3:12b")
     assert str(copilot.client.base_url).rstrip("/") == "http://mac-mini.local:11434/v1"
 
+
+def test_unknown_or_missing_ids_fall_back_to_default():
+    """A renamed id, or one saved by an older version, quietly gives Anthropic instead of breaking setup."""
+    assert providers.provider(None) is providers.BY_ID[providers.DEFAULT]
+    assert providers.provider("") is providers.BY_ID[providers.DEFAULT]
+    assert providers.provider("not-a-service") is providers.BY_ID[providers.DEFAULT]
+
+
+def test_every_provider_id_resolves_to_itself_and_is_unique():
+    ids = [p.id for p in providers.PROVIDERS]
+    assert len(ids) == len(set(ids))
+    for service in providers.PROVIDERS:
+        assert providers.provider(service.id) is service

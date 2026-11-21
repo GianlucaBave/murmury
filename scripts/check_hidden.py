@@ -1,6 +1,6 @@
 """Check that Murmury's window stays out of screen capture, on this Mac, now.
 
-    uv run python scripts/check_hidden.py
+    uv run --with pillow python scripts/check_hidden.py
 
 Shows two boxes for a few seconds: magenta, set up exactly like Murmury's floating window, and green, an
 ordinary window. Captures the screen three ways: ScreenCaptureKit (what Zoom, Meet and Teams use),

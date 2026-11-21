@@ -1,3 +1,4 @@
+import json
 import time
 
 import openai
@@ -313,3 +314,183 @@ def test_main_says_so_when_the_local_server_cannot_be_reached(monkeypatch, capsy
     assert s.main(["--provider", "ollama", "--model", "gemma3:12b"]) == 2
     err = capsys.readouterr().err
     assert "Could not run gemma3:12b on Ollama" in err and "http://localhost:11434/v1" in err
+
+
+# -- comparing several models -------------------------------------------------------------------
+
+
+def fake_models(monkeypatch, replies):
+    """build_copilot returns a FakeCopilot per model name; a reply of None means the model cannot be reached."""
+
+    class Unreachable(FakeCopilot):
+        def answer(self, question, before=""):
+            raise openai.OpenAIError("model not found")
+            yield  # a generator, like the real one
+
+    def build(service, key, model, prompt):
+        reply = replies[model]
+        return Unreachable(prompt, perfect) if reply is None else FakeCopilot(prompt, reply)
+
+    monkeypatch.setattr(s, "build_copilot", build)
+
+
+def mute(question):
+    return ["SKIP"]
+
+
+def test_one_model_prints_the_report_and_no_table(monkeypatch, capsys):
+    fake_models(monkeypatch, {"a": perfect})
+    assert s.main(["--provider", "ollama", "--model", "a"]) == 0
+    out = capsys.readouterr().out
+    assert out.startswith("a on Ollama · local, 40 lines\n\n")
+    assert "Accuracy" not in out and "|" not in out
+
+
+def test_several_model_names_are_read_in_order(monkeypatch, capsys):
+    fake_models(monkeypatch, {"a": perfect, "b": perfect, "c": perfect})
+    assert s.main(["--provider", "ollama", "--model", "c", "a", "b"]) == 0
+    out = capsys.readouterr().out
+    assert out.index("c on Ollama") < out.index("a on Ollama") < out.index("b on Ollama")
+    assert out.index("| c |") < out.index("| a |") < out.index("| b |")
+
+
+def test_three_models_make_three_rows_with_their_own_counts_and_accuracy(monkeypatch, capsys):
+    fake_models(monkeypatch, {"good": perfect, "chatty": answer_text, "quiet": mute})
+    assert s.main(["--provider", "ollama", "--model", "good", "chatty", "quiet"]) == 0
+    out = capsys.readouterr().out
+    assert out.count("Answered when it should skip   ") == 3  # the per-model reports are kept
+    rows = {line.split("|")[1].strip(): [c.strip() for c in line.split("|")[2:-1]]
+            for line in out.splitlines() if line.startswith("| ") and "Model" not in line}
+    assert rows["good"][:3] == ["0/20", "0/20", "100.0%"]
+    assert rows["chatty"][:3] == ["20/20", "0/20", "50.0%"]
+    assert rows["quiet"][:3] == ["0/20", "20/20", "50.0%"]
+    assert rows["quiet"][4] == "none" and rows["chatty"][3] == "none"  # never answered / never skipped
+
+
+def test_the_table_has_the_six_columns_the_issue_names(monkeypatch, capsys):
+    fake_models(monkeypatch, {"a": perfect, "b": perfect})
+    s.main(["--model", "a", "b"])
+    out = capsys.readouterr().out
+    for column in s.COLUMNS:
+        assert column in out
+    assert len(s.COLUMNS) == 6
+
+
+def test_a_model_that_cannot_be_reached_gets_a_failed_row_and_the_others_still_run(monkeypatch, capsys):
+    fake_models(monkeypatch, {"a": perfect, "gone": None, "c": perfect})
+    assert s.main(["--provider", "ollama", "--model", "a", "gone", "c"]) == 0
+    captured = capsys.readouterr()
+    assert "Could not run gone on Ollama · local" in captured.err
+    assert "c on Ollama · local, 40 lines" in captured.out
+    assert "| gone | failed: model not found | - | - | - | - |" in captured.out
+    assert "| a | 0/20 | 0/20 | 100.0% |" in captured.out and "| c | 0/20 | 0/20 | 100.0% |" in captured.out
+
+
+def test_when_every_model_fails_the_exit_status_is_2(monkeypatch, capsys):
+    fake_models(monkeypatch, {"x": None, "y": None})
+    assert s.main(["--provider", "ollama", "--model", "x", "y"]) == 2
+    assert capsys.readouterr().out.count("| failed: model not found |") == 2
+
+
+def test_runs_count_out_of_lines_times_runs_in_the_table(monkeypatch, capsys):
+    fake_models(monkeypatch, {"a": answer_text, "b": perfect})
+    s.main(["--model", "a", "b", "--runs", "2"])
+    assert "| a | 40/40 | 0/40 | 50.0% |" in capsys.readouterr().out
+
+
+def test_the_median_times_in_the_table_are_the_ones_the_report_prints():
+    results = [result("Hi", s.SKIP, False, 0.2), result("Bye", s.SKIP, False, 0.3),
+               result("How much?", s.ANSWER, True, 0.4), result("What colours?", s.ANSWER, True, 1.0)]
+    assert s.summarise("m", results)[4:] == ["0.25 s", "0.70 s"]
+
+
+def test_the_text_table_lines_up_its_columns():
+    rows = [s.summarise("m", [result("Hi", s.SKIP, False, 0.2)]), s.failed_row("longer-name:4b", "boom")]
+    lines = s.table(rows).splitlines()
+    assert len(lines) == 4 and set(lines[1]) <= {"-", " "}
+    start = lines[0].index("Answered when it should skip")
+    assert all(line[start - 2:start] == "  " and line[start] != " " for line in lines[:1] + lines[2:])
+
+
+def test_a_pipe_in_an_error_does_not_break_the_markdown_row():
+    assert s.markdown_table([s.failed_row("m", "a | b\nc")]).splitlines()[2].count("|") == 7
+
+
+
+# -- the --json file -------------------------------------------------------------------------------
+
+
+def run_json(monkeypatch, tmp_path, replies, *more):
+    """main() with --json for fake models: the exit status, and the file read back."""
+    fake_models(monkeypatch, replies)
+    path = tmp_path / "skip.json"
+    status = s.main(["--provider", "ollama", "--model", *replies, "--json", str(path), *more])
+    return status, json.loads(path.read_text(encoding="utf-8"))
+
+
+def test_the_json_has_one_entry_per_model_in_the_order_given(monkeypatch, tmp_path):
+    status, data = run_json(monkeypatch, tmp_path, {"c": perfect, "a": perfect, "b": perfect})
+    assert status == 0
+    assert data["provider"] == "ollama" and data["runs"] == 1
+    assert [m["model"] for m in data["models"]] == ["c", "a", "b"]
+
+
+def test_one_model_with_json_writes_the_file_too(monkeypatch, tmp_path):
+    _, data = run_json(monkeypatch, tmp_path, {"a": perfect})
+    assert [m["model"] for m in data["models"]] == ["a"]
+
+
+def test_the_numbers_in_the_json_are_the_ones_the_table_prints(monkeypatch, tmp_path, capsys):
+    _, data = run_json(monkeypatch, tmp_path, {"good": perfect, "chatty": answer_text, "quiet": mute})
+    out = capsys.readouterr().out
+    rows = {line.split("|")[1].strip(): [c.strip() for c in line.split("|")[2:-1]]
+            for line in out.splitlines() if line.startswith("| ") and "Model" not in line}
+    assert set(rows) == {"good", "chatty", "quiet"}
+
+    def median(times):
+        return "none" if times is None else f"{times['median']:.2f} s"
+
+    for m in data["models"]:
+        assert rows[m["model"]] == [f"{m['answered_when_it_should_skip']}/{m['should_skip']}",
+                                    f"{m['skipped_when_it_should_answer']}/{m['should_answer']}",
+                                    f"{m['accuracy']:.1f}%",
+                                    median(m["time_to_skip"]),
+                                    median(m["time_to_first_word"])]
+
+
+def test_the_json_keeps_every_line_with_what_the_window_would_show(monkeypatch, tmp_path):
+    _, data = run_json(monkeypatch, tmp_path, {"a": perfect}, "--runs", "2")
+    lines = data["models"][0]["lines"]
+    assert data["runs"] == 2 and len(lines) == 80
+    assert [entry["line"]["text"] for entry in lines[:40]] == [line.text for line in LINES]
+    for entry in lines:
+        assert set(entry["line"]) == {"text", "expect", "kind", "before"}
+        assert entry["answered"] == (entry["line"]["expect"] == s.ANSWER)
+        assert entry["shown"] == ("SAY: It is $120 per lamp." if entry["answered"] else "")
+        assert isinstance(entry["seconds"], float)
+
+
+def test_a_model_that_failed_is_in_the_json_with_its_error(monkeypatch, tmp_path):
+    status, data = run_json(monkeypatch, tmp_path, {"a": perfect, "gone": None})
+    assert status == 0
+    assert data["models"][0]["error"] is None
+    assert data["models"][1] == {"model": "gone", "error": "model not found", "lines": []}
+
+
+def test_when_every_model_fails_the_json_is_still_written_with_each_error(monkeypatch, tmp_path):
+    status, data = run_json(monkeypatch, tmp_path, {"x": None, "y": None})
+    assert status == 2
+    assert [(m["model"], m["error"]) for m in data["models"]] == [("x", "model not found"), ("y", "model not found")]
+
+
+def test_without_json_nothing_is_written(monkeypatch, tmp_path):
+    fake_models(monkeypatch, {"a": perfect, "b": perfect})
+    monkeypatch.chdir(tmp_path)
+    assert s.main(["--provider", "ollama", "--model", "a", "b"]) == 0
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_a_time_in_the_json_is_null_when_no_line_was_skipped_or_answered():
+    entry = s.as_json("m", [result("How much?", s.ANSWER, True, 0.4), result("What colours?", s.ANSWER, True, 1.0)])
+    assert entry["time_to_skip"] is None
+    assert entry["time_to_first_word"] == pytest.approx({"median": 0.7, "slowest": 1.0, "lines": 2})

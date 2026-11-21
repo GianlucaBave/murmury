@@ -65,7 +65,10 @@ def page_set(spec: str | None) -> set[int] | None:
     out: set[int] = set()
     for part in spec.split(","):
         a, _, b = part.partition("-")
-        out |= set(range(int(a), int(b or a) + 1))
+        first, last = int(a), int(b or a)
+        if last < first:
+            raise ValueError(f"backwards page range {part.strip()!r}: page {first} comes after page {last}")
+        out |= set(range(first, last + 1))
     return out
 
 
