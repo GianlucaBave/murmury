@@ -1320,7 +1320,10 @@ def load_style(settings: QSettings | None = None) -> Style:
         if raw is None:
             continue
         kind = type(getattr(default, key))
-        values[key] = (str(raw).lower() == "true") if kind is bool else kind(raw)
+        try:
+            values[key] = (str(raw).lower() == "true") if kind is bool else kind(raw)
+        except (TypeError, ValueError):
+            continue
     return Style(**values)
 
 
