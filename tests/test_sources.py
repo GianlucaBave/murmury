@@ -1,3 +1,4 @@
+import html
 import os
 import re
 
@@ -20,7 +21,7 @@ def test_source_tag_links_when_only_one_document_is_loaded(tmp_path, monkeypatch
 
     rendered = answer_html("- Revenue grew [page 12]", [document])
 
-    assert 'href="murmury-source:0?tag=page%2012"'
+    assert 'href="murmury-source:0?tag=page%2012&amp;line=Revenue%20grew"' in rendered
     assert "&nbsp;page 12&nbsp;" in rendered
 
 
@@ -66,7 +67,7 @@ def test_source_tag_with_explicit_filename_becomes_a_link(tmp_path, monkeypatch)
 
     rendered = answer_html("- Revenue grew [forecast.xlsx sheet Summary!B4]", paths)
 
-    assert 'href="murmury-source:1?tag=forecast.xlsx%20sheet%20Summary%21B4"' in rendered
+    assert 'href="murmury-source:1?tag=forecast.xlsx%20sheet%20Summary%21B4&amp;line=Revenue%20grew"' in rendered
 
 
 def test_open_source_uses_local_file_url(tmp_path, monkeypatch):
@@ -123,12 +124,12 @@ def test_source_link_carries_the_tag_unchanged(tmp_path, monkeypatch):
     })
     for tag in ["page 12", "sheet P&L", "notes.md#Pricing", 'the "base" case', "§4.2", "Q1+Q2"]:
         rendered = answer_html(f"- Revenue grew [{tag}]", [tmp_path / "plan.pdf"])
-        href = re.search(r'href="([^"]+)"', rendered).group(1)
-        assert parse_source_link(href) == (0, tag)
+        href = html.unescape(re.search(r'href="([^"]+)"', rendered).group(1))
+        assert parse_source_link(href) == (0, tag, "Revenue grew")
 
 
 def test_parse_source_link_accepts_an_old_link_without_a_tag():
-    assert parse_source_link("murmury-source:0") == (0, "")
+    assert parse_source_link("murmury-source:0") == (0, "", "")
 
 
 def test_parse_source_link_rejects_links_that_are_not_ours():
@@ -146,3 +147,14 @@ def test_open_source_never_takes_a_path_from_the_tag(tmp_path, monkeypatch):
     Window.open_source(window, "murmury-source:0?tag=..%2F..%2Fetc%2Fpasswd")
 
     assert opened == [QUrl.fromLocalFile(str(document))]
+
+
+def test_source_link_carries_the_fact_as_plain_text(tmp_path, monkeypatch):
+    monkeypatch.setattr(app.theme, "palette", lambda: {
+        "text": "#111", "tag_fg": "#333", "tag_bg": "#eee", "link": "#06c",
+    })
+    rendered = answer_html('- CAC: €3,900 in Year 1, "P&L" #2 + more [page 12]', [tmp_path / "plan.pdf"])
+    href = html.unescape(re.search(r'href="([^"]+)"', rendered).group(1))
+
+    assert parse_source_link(href) == (0, "page 12", 'CAC: €3,900 in Year 1, "P&L" #2 + more')
+    assert "<b" not in href
