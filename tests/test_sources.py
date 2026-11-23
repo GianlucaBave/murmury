@@ -43,6 +43,7 @@ def test_multi_document_source_resolves_only_an_explicit_filename(tmp_path):
     assert source_index("plan.pdf page 12", paths) == 0
     assert source_index("page 12", paths) is None
     assert source_index("forecast.xlsx.evil page 12", paths) is None
+    assert source_index("forecast.xlsx", paths) == 1
 
 
 def test_multi_document_source_accepts_comma_after_filename():
