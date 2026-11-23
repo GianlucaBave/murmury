@@ -65,14 +65,14 @@ def source_index(reference: str, paths: list[Path]) -> int | None:
     return None
 
 
-def parse_source_link(link: str) -> tuple[int, str] | None:
+def parse_source_link(link: str) -> tuple[int, str, str] | None:
     """The file index and the tag text in a source link, or None if the link is not one of ours.
     The tag is only text to look for; the file is always chosen by the index."""
     parts = urlsplit(link)
     if parts.scheme != "murmury-source" or not parts.path.isdecimal():
         return None
-    tag = parse_qs(parts.query).get("tag", [""])[0]
-    return int(parts.path), tag
+    query = parse_qs(parts.query)
+    return int(parts.path), query.get("tag", [""])[0], query.get("line", [""])[0]
 
 
 MAX_LINES = 3  # fact lines a card shows under the SAY line: the answer style's limit, set at start
@@ -122,8 +122,8 @@ def answer_html(text: str, source_paths: list[Path] | None = None) -> str:
         index = source_index(ref.group(1), source_paths or []) if ref else None
         tag_text = (f'&nbsp;{html.escape(ref.group(1), quote=False)}&nbsp;' if ref else "")
         if index is not None:
-            href = f"murmury-source:{index}?tag={quote(ref.group(1), safe='')}"
-            tag = (f' <a href="{href}" style="color:{c["link"]}; text-decoration:underline;">'
+            href = f"murmury-source:{index}?tag={quote(ref.group(1), safe='')}&line={quote(plain, safe='')}"
+            tag = (f' <a href="{html.escape(href)}" style="color:{c["link"]}; text-decoration:underline;">'
                    f'<span style="background:{c["tag_bg"]}; font-size:11px;">{tag_text}</span></a>')
         else:
             tag = (f' <span style="color:{c["tag_fg"]}; background:{c["tag_bg"]}; font-size:11px;">{tag_text}</span>'
@@ -390,7 +390,7 @@ class Window(QWidget):
         parsed = parse_source_link(link)
         if parsed is None:
             return
-        index, tag = parsed
+        index, tag , line = parsed
         if index >= len(self.source_paths):
             return
         path = self.source_paths[index]
