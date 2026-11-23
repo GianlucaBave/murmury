@@ -98,3 +98,28 @@ def find_section(tag: str, name: str, text: str) -> tuple[int, int, str | None]:
             end = later_start
             break
     return start, end, None
+
+
+COMMON = frozenset("the and our for are was were with that this from have has its but not you your they their will can".split())
+MIN_SHARE = 0.5  # share of a fact's key words a line must hold to be highlighted: a starting value, tune it on real calls
+
+def key_words(text: str) -> list[str]:
+    """The words that tell one line from another: numbers, and words of three letters or more that are not common
+    little words ("we", "the", "and" say nothing about where a fact comes from)."""
+    return [w for w in words(text) if any(c.isdigit() for c in w) or (len(w) >= 3 and w not in COMMON)]
+
+
+def best_block(fact: str, text: str, start: int, end: int) -> tuple[int, int] | None:
+    """The line of text[start:end] a fact line most likely comes from, as (start, end) offsets, or None when no
+    line holds at least MIN_SHARE of the fact's key words. A wrong highlight is worse than none."""
+    wanted = set(key_words(fact))
+    if not wanted:
+        return None
+    best, best_share = None, 0.0
+    offset = start
+    for line in text[start:end].splitlines(keepends=True):
+        share = len(wanted & set(key_words(line))) / len(wanted)
+        if share > best_share:
+            best, best_share = (offset, offset + len(line.rstrip("\r\n"))), share
+        offset += len(line)
+    return best if best_share >= MIN_SHARE else None
