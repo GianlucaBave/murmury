@@ -30,6 +30,7 @@ from . import theme
 from .chrome import AppearanceButton, TrafficLights
 from .hotkeys import HotKeyError, HotKeys
 from .pipeline import respond
+from .viewer import after_name
 
 JOIN_SECONDS = 6.0  # a line this soon after the last one continues the same question
 
@@ -59,10 +60,8 @@ def source_index(reference: str, paths: list[Path]) -> int | None:
         return 0
     for index, path in enumerate(paths):
         name = PurePosixPath(str(path).replace("\\", "/")).name
-        if reference.casefold().startswith(name.casefold()):
-            boundary = reference[len(name):len(name) + 1]
-            if not boundary or boundary in " ,:!#[":
-                return index
+        if after_name(reference, name) is not None:
+            return index
     return None
 
 
