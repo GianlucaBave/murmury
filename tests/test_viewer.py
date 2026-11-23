@@ -2,7 +2,8 @@ import os
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from copilot.viewer import after_name, find_section, headings, page_from_tag, pdf_index, words
+from copilot.viewer import (after_name, best_block, find_section, headings, key_words, page_from_tag,
+                            pdf_index, words)
 
 
 def test_after_name_removes_the_file_name_and_its_separator():
@@ -143,3 +144,39 @@ def test_find_section_never_jumps_into_a_code_block():
 
 def test_find_section_does_not_confuse_4_with_4_2():
     assert find_section("§4", "notes.md", NOTES)[2]
+
+
+def highlighted(fact, tag=""):
+    start, end, _ = find_section(tag, "notes.md", NOTES)
+    found = best_block(fact, NOTES, start, end)
+    return NOTES[found[0]:found[1]] if found else None
+
+
+def test_key_words_keeps_numbers_and_acronyms_and_drops_little_words():
+    assert key_words("We cut CAC to €3,900 in Year 1") == ["cut", "cac", "3", "900", "year", "1"]
+
+
+def test_best_block_highlights_the_line_a_fact_comes_from():
+    assert highlighted("Our three tiers cost €20, €50 and €90 a month", "Pricing") == "Three tiers: €20, €50, €90."
+
+
+def test_best_block_picks_the_line_that_shares_the_most():
+    assert highlighted("Custom contracts for enterprise", "Pricing") == "Custom contracts."
+
+
+def test_best_block_stays_inside_the_section():
+    assert highlighted("We started at €10 a seat", "Pricing") is None
+    assert highlighted("We started at €10 a seat") == "We started at €10."
+
+
+def test_best_block_highlights_nothing_when_few_words_are_shared():
+    assert highlighted("Three founders run sales") is None
+
+
+def test_best_block_highlights_nothing_for_an_answer_in_another_language():
+    assert highlighted("Abbiamo tre fasce di prezzo") is None
+
+
+def test_best_block_highlights_nothing_for_an_empty_fact():
+    assert highlighted("") is None
+    assert highlighted("We do it") is None
