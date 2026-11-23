@@ -106,3 +106,74 @@ def test_training_is_repeatable_and_separates_a_toy_set():
     assert (weights == detect.train(lines)).all()
     classify = detect.classifier(weights)
     assert [classify(item) for item in lines] == [item.expect == detect.ANSWER for item in lines]
+
+
+def test_score_accuracy_is_zero_for_empty_lines():
+    empty = detect.Score("rules", "empty", [], [], [], 0.0)
+    assert empty.accuracy == 0.0
+
+
+def test_row_formats_detector_counts_accuracy_and_time():
+    skip_1 = line("Can you hear me?", SKIP, "audio check")
+    skip_2 = line("Hello everyone.", SKIP, "greeting")
+    ans_1 = line("How much is it?", ANSWER, "price")
+    ans_2 = line("Tell me the price.", ANSWER, "request")
+    result = detect.Score(
+        "rules",
+        "development",
+        [skip_1, skip_2, ans_1, ans_2],
+        false_answers=[skip_1],
+        false_skips=[ans_2],
+        microseconds=1.24,
+    )
+    assert detect.row(result) == ["rules", "development (4)", "1/2", "1/2", "50.0%", "1.2 us"]
+
+
+def test_table_and_markdown_table_format_columns():
+    rows = [
+        ["rules", "development (2)", "0/1", "0/1", "100.0%", "1.2 us"],
+        ["question mark", "held-out (20)", "1/10", "2/10", "85.0%", "0.4 us"],
+    ]
+    plain = detect.table(rows).splitlines()
+    assert len(plain) == 4
+    assert all(set(ch for ch in part) == {"-"} for part in plain[1].split("  "))
+    assert len(plain[0]) <= len(plain[1])
+    assert plain[2].index("development (2)") == plain[3].index("held-out (20)")
+
+    md = detect.markdown_table(rows).splitlines()
+    assert len(md) == 4
+    assert "---" in md[1]
+    pipe_counts = {row_str.count("|") for row_str in md}
+    assert len(pipe_counts) == 1
+
+
+def test_wrong_lines_lists_misses_or_header_only():
+    skip_line = line("Can you hear me?", SKIP, "audio check")
+    ans_line = line("Tell me the price.", ANSWER, "request")
+    clean = detect.Score("rules", "dev", [skip_line, ans_line], [], [], 0.5)
+    assert detect.wrong_lines(clean) == "rules, dev lines, wrong:"
+
+    with_misses = detect.Score("rules", "dev", [skip_line, ans_line], [skip_line], [ans_line], 0.5)
+    text = detect.wrong_lines(with_misses)
+    assert text.splitlines() == [
+        "rules, dev lines, wrong:",
+        "  answered, should skip [audio check] 'Can you hear me?'",
+        "  skipped, should answer [request] 'Tell me the price.'",
+    ]
+
+
+def test_microseconds_per_line_call_count_and_empty():
+    calls = 0
+
+    def counting_detector(_line: Line) -> bool:
+        nonlocal calls
+        calls += 1
+        return False
+
+    assert detect.microseconds_per_line(counting_detector, []) == 0.0
+    assert calls == 0
+
+    sample = [line("One?"), line("Two."), line("Three?")]
+    elapsed = detect.microseconds_per_line(counting_detector, sample, passes=3, repeats=4)
+    assert calls == 3 * 4 * len(sample)
+    assert elapsed >= 0.0
