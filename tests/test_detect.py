@@ -106,3 +106,75 @@ def test_training_is_repeatable_and_separates_a_toy_set():
     assert (weights == detect.train(lines)).all()
     classify = detect.classifier(weights)
     assert [classify(item) for item in lines] == [item.expect == detect.ANSWER for item in lines]
+
+
+def test_a_row_has_the_name_the_counts_the_accuracy_and_the_time():
+    lines = [line("Can you hear me okay?", SKIP, "audio check"),
+             line("Tell me the price.", ANSWER, "request"),
+             line("Hello everyone.", SKIP, "greeting")]
+    result = detect.Score("rules", "development", lines, [lines[0]], [lines[1]], 12.34)
+    assert detect.row(result) == ["rules", "development (3)", "1/2", "1/1", "33.3%", "12.3 us"]
+
+
+def test_the_accuracy_of_no_lines_is_zero():
+    assert detect.Score("rules", "empty", [], [], [], 0.0).accuracy == 0.0
+
+
+def test_the_table_lines_up_the_columns_under_the_header_and_a_dashed_rule():
+    rows = [["rules", "development (2)", "1/1", "0/1", "50.0%", "1.0 us"],
+            ["question mark", "held-out (3)", "0/2", "1/1", "66.7%", "9.5 us"]]
+    lines = detect.table(rows).splitlines()
+    assert len(lines) == len(rows) + 2
+    starts = [lines[0].index(name) for name in detect.COLUMNS]
+    assert all(dash == "-" for start in starts for dash in lines[1][start:start + 1])
+    assert set(lines[1]) <= {"-", " "}
+    for name, start in zip(detect.COLUMNS, starts):
+        assert lines[0][start:].startswith(name)
+    for row, text in zip(rows, lines[2:]):
+        assert all(text[start:].startswith(cell) for start, cell in zip(starts, row))
+
+
+def test_the_markdown_table_has_a_separator_and_the_same_pipes_on_every_line():
+    rows = [["rules", "development (2)", "1/1", "0/1", "50.0%", "1.0 us"]]
+    lines = detect.markdown_table(rows).splitlines()
+    assert lines[0] == "| " + " | ".join(detect.COLUMNS) + " |"
+    assert lines[1].startswith("|") and set(lines[1]) <= {"|", "-"}
+    assert len(lines) == len(rows) + 2
+    assert all(text.count("|") == len(detect.COLUMNS) + 1 for text in lines)
+
+
+def test_wrong_lines_lists_both_mistakes_with_their_kind():
+    lines = [line("Can you hear me okay?", SKIP, "audio check"),
+             line("Tell me the price.", ANSWER, "request")]
+    result = detect.Score("question mark", "tiny", lines, [lines[0]], [lines[1]], 0.0)
+    assert detect.wrong_lines(result).splitlines() == [
+        "question mark, tiny lines, wrong:",
+        "  answered, should skip [audio check] 'Can you hear me okay?'",
+        "  skipped, should answer [request] 'Tell me the price.'",
+    ]
+
+
+def test_wrong_lines_with_no_mistakes_is_just_the_header():
+    lines = [line("How much is it?")]
+    result = detect.Score("question mark", "tiny", lines, [], [], 0.0)
+    assert detect.wrong_lines(result).splitlines() == ["question mark, tiny lines, wrong:"]
+
+
+def test_the_time_per_line_calls_the_detector_passes_times_repeats_times_lines():
+    calls = []
+    def detector(entry):
+        calls.append(entry.text)
+        return True
+    lines = [line("How much is it?"), line("Is it dimmable?")]
+    seconds = detect.microseconds_per_line(detector, lines, passes=3, repeats=4)
+    assert len(calls) == 3 * 4 * len(lines)
+    assert seconds >= 0
+
+
+def test_the_time_per_line_of_no_lines_is_zero_and_calls_nothing():
+    calls = []
+    def detector(entry):
+        calls.append(entry.text)
+        return True
+    assert detect.microseconds_per_line(detector, []) == 0.0
+    assert calls == []
