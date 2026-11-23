@@ -1,4 +1,5 @@
 import os
+import re
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
@@ -8,7 +9,7 @@ from types import SimpleNamespace
 from PySide6.QtCore import QUrl
 
 from copilot import app
-from copilot.app import Window, answer_html, source_index
+from copilot.app import Window, answer_html, source_index, parse_source_link
 
 
 def test_source_tag_links_when_only_one_document_is_loaded(tmp_path, monkeypatch):
@@ -19,7 +20,7 @@ def test_source_tag_links_when_only_one_document_is_loaded(tmp_path, monkeypatch
 
     rendered = answer_html("- Revenue grew [page 12]", [document])
 
-    assert 'href="murmury-source:0"' in rendered
+    assert 'href="murmury-source:0?tag=page%2012"'
     assert "&nbsp;page 12&nbsp;" in rendered
 
 
@@ -64,7 +65,7 @@ def test_source_tag_with_explicit_filename_becomes_a_link(tmp_path, monkeypatch)
 
     rendered = answer_html("- Revenue grew [forecast.xlsx sheet Summary!B4]", paths)
 
-    assert 'href="murmury-source:1"' in rendered
+    assert 'href="murmury-source:1?tag=forecast.xlsx%20sheet%20Summary%21B4"' in rendered
 
 
 def test_open_source_uses_local_file_url(tmp_path, monkeypatch):
@@ -102,6 +103,7 @@ def test_open_source_reports_a_missing_document(tmp_path, monkeypatch):
 
     assert statuses == ["Source file is no longer available: missing.pdf"]
 
+
 def test_open_source_reports_when_the_default_app_cannot_open_the_file(tmp_path, monkeypatch):
     document = tmp_path / "plan.pdf"
     document.write_bytes(b"pdf")
@@ -112,3 +114,34 @@ def test_open_source_reports_when_the_default_app_cannot_open_the_file(tmp_path,
     Window.open_source(window, "murmury-source:0")
 
     assert statuses == ["Could not open plan.pdf"]
+
+
+def test_source_link_carries_the_tag_unchanged(tmp_path, monkeypatch):
+    monkeypatch.setattr(app.theme, "palette", lambda: {
+        "text": "#111", "tag_fg": "#333", "tag_bg": "#eee", "link": "#06c",
+    })
+    for tag in ["page 12", "sheet P&L", "notes.md#Pricing", 'the "base" case', "§4.2", "Q1+Q2"]:
+        rendered = answer_html(f"- Revenue grew [{tag}]", [tmp_path / "plan.pdf"])
+        href = re.search(r'href="([^"]+)"', rendered).group(1)
+        assert parse_source_link(href) == (0, tag)
+
+
+def test_parse_source_link_accepts_an_old_link_without_a_tag():
+    assert parse_source_link("murmury-source:0") == (0, "")
+
+
+def test_parse_source_link_rejects_links_that_are_not_ours():
+    for link in ["https://example.com", "murmury-source:", "murmury-source:-1",
+                 "murmury-source:0abc", "other-source:0?tag=page%2012"]:
+        assert parse_source_link(link) is None
+
+def test_open_source_never_takes_a_path_from_the_tag(tmp_path, monkeypatch):
+    document = tmp_path / "plan.pdf"
+    document.write_bytes(b"pdf")
+    opened = []
+    window = SimpleNamespace(source_paths=[document], set_status=lambda message: None)
+    monkeypatch.setattr(app.QDesktopServices, "openUrl", lambda url: opened.append(url) or True)
+
+    Window.open_source(window, "murmury-source:0?tag=..%2F..%2Fetc%2Fpasswd")
+
+    assert opened == [QUrl.fromLocalFile(str(document))]
