@@ -42,3 +42,59 @@ def pdf_index(tag: str, name: str, page_count: int) -> tuple[int, str | None]:
     if not 1 <= number <= page_count:
         return 0, f"{name} has no page {number} (it has {page_count}): showing page 1"
     return number - 1, None
+
+
+def words(text: str) -> list[str]:
+    """The words of a text in lower case, for comparing a tag with a heading: "§4.2 Go-to-market" ->
+    ["4.2", "go", "to", "market"]. A number like 4.2 stays one word."""
+    return re.findall(r"\w+(?:\.\w+)*", text.casefold())
+
+
+HEADING = re.compile(r"(#{1,6})\s+(.+?)\s*#*\s*$")
+FENCE = ("```", "~~~")
+
+
+def headings(text: str) -> list[tuple[int, int, str]]:
+    """The Markdown headings in a text: where each starts (a character offset), its level (1 for #, 2 for ##...)
+    and its title. Lines inside ``` code blocks are not headings, even when they start with #."""
+    found, offset, in_code = [], 0, False
+    for line in text.splitlines(keepends=True):
+        if line.lstrip().startswith(FENCE):
+            in_code = not in_code
+        elif not in_code:
+            match = HEADING.match(line)
+            if match:
+                found.append((offset, len(match.group(1)), match.group(2)))
+        offset += len(line)
+    return found
+
+
+def heading_index(found: list[tuple[int, int, str]], wanted: list[str]) -> int | None:
+    """The position in `found` of the heading a tag means: first a title equal to the tag, then a title that
+    starts with it ("4.2" finds "4.2 Go-to-market"), or None."""
+    for index, (_, _, title) in enumerate(found):
+        if words(title) == wanted:
+            return index
+    for index, (_, _, title) in enumerate(found):
+        if words(title)[:len(wanted)] == wanted:
+            return index
+    return None
+
+
+def find_section(tag: str, name: str, text: str) -> tuple[int, int, str | None]:
+    """The part of a Markdown or text file a heading tag cites: its start and end (character offsets) and a
+    message when no heading matches. A section runs from its heading to the next heading of the same or a
+    higher level, so it includes its subsections."""
+    rest = after_name(tag, name)
+    wanted = words(tag if rest is None else rest)
+    found = headings(text)
+    index = heading_index(found, wanted) if wanted else None
+    if index is None:
+        return 0, len(text), (f"No heading [{tag}] in {name}: showing the start" if tag else None)
+    start, level, _ = found[index]
+    end = len(text)
+    for later_start, later_level, _ in found[index + 1:]:
+        if later_level <= level:
+            end = later_start
+            break
+    return start, end, None
