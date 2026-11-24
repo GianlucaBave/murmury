@@ -2,11 +2,12 @@
 
     uv run --with pillow python scripts/check_hidden.py
 
-Shows two boxes for a few seconds: magenta, set up exactly like Murmury's floating window, and green, an
+Shows three boxes for a few seconds: magenta, set up exactly like Murmury's floating window; cyan, Murmury's
+source viewer made by the same make_viewer() the app uses (hidden before its first show); and green, an
 ordinary window. Captures the screen three ways: ScreenCaptureKit (what Zoom, Meet and Teams use),
 `screencapture` (macOS screenshots) and CGWindowListCreateImage (older capture). It does this twice:
-first with the magenta box's hiding switched off, where it must show up (so the test can see it), then
-switched on, where it must be gone. The green box must be in every capture (so the capture itself works).
+first with hiding switched off, where magenta and cyan must show up (so the test can see them), then
+switched on, where both must be gone. The green box must be in every capture (so the capture itself works).
 Run it again after each macOS update. Nothing is saved outside a temporary folder.
 """
 import subprocess
@@ -21,9 +22,10 @@ from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QApplication, QWidget
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from copilot.app import configure_native_window  # noqa: E402
+from copilot.app import configure_native_window, make_viewer  # noqa: E402
 
 HERE = Path(__file__).parent
+VIEWER_STYLE = "#panel, QPlainTextEdit { background: #00ffff; border: none; }"  # one colour, so it can be counted
 
 
 def count(path: Path, rgb: tuple[int, int, int]) -> int:
@@ -35,6 +37,16 @@ def settle(app: QApplication) -> None:
     for _ in range(30):
         app.processEvents()
         time.sleep(0.03)
+
+
+def viewer_box(hide: bool):
+    """Murmury's source viewer made as app.main() makes it, set up before its first show, painted cyan."""
+    viewer, _ = make_viewer(hide_from_capture=hide)
+    viewer.setStyleSheet(VIEWER_STYLE)
+    viewer.setGeometry(260, 560, 360, 260)
+    viewer.stack.setCurrentWidget(viewer.text)
+    viewer.show()  # not activated, like the other boxes: the check must not switch apps or Spaces while it captures
+    return viewer
 
 
 def capture(tool: Path, folder: Path) -> dict[str, Path]:
@@ -76,12 +88,15 @@ def main() -> int:
         configure_native_window(w, hide_from_capture=False)
         boxes.append(w)
     magenta = boxes[0]
+    viewer = viewer_box(hide=False)
     settle(app)
-    rounds = {False: capture(tool, tmp / "hiding-off")}  # the test must see the magenta box here
-    configure_native_window(magenta, hide_from_capture=True)  # the only change: Murmury's hiding switched on
+    rounds = {False: capture(tool, tmp / "hiding-off")}  # the test must see the magenta box and the viewer here
+    configure_native_window(magenta, hide_from_capture=True)  # Murmury's hiding switched on
+    first, viewer = viewer, viewer_box(hide=True)  # a new viewer, hidden before it is ever shown, as app.main() does
+    first.hide()
     settle(app)
     rounds[True] = capture(tool, tmp / "hiding-on")
-    for w in boxes:
+    for w in boxes + [viewer]:
         w.close()
     app.processEvents()
     ok = True
@@ -92,10 +107,11 @@ def main() -> int:
                 print(f"  {name}: no capture (screen recording permission?)")
                 ok = False
                 continue
-            box, control = count(path, (255, 0, 255)), count(path, (0, 255, 0))
-            passed = control > 0 and (box == 0 if hidden else box > 0)
+            box, shown, control = count(path, (255, 0, 255)), count(path, (0, 255, 255)), count(path, (0, 255, 0))
+            passed = control > 0 and ((box == 0 and shown == 0) if hidden else (box > 0 and shown > 0))
             ok &= passed
-            print(f"  {'PASS' if passed else 'FAIL'}  {name}: Murmury-style window {box} px, ordinary window {control} px")
+            print(f"  {'PASS' if passed else 'FAIL'}  {name}: Murmury-style window {box} px, "
+                  f"source viewer {shown} px, ordinary window {control} px")
     print("\nHidden from every capture." if ok else "\nNOT proven hidden everywhere: do not rely on it.")
     return 0 if ok else 1
 
