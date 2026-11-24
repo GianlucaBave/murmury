@@ -1,10 +1,15 @@
 import os
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+from pypdf import PdfWriter
+from PySide6.QtWidgets import QApplication
 
-from copilot.viewer import (after_name, best_block, find_section, headings, key_words, page_from_tag,
+
+from copilot.viewer import (SourceViewer, after_name, best_block, find_section, headings, key_words, page_from_tag,
                             pdf_index, words)
 
+
+APP = QApplication.instance() or QApplication([])
 
 def test_after_name_removes_the_file_name_and_its_separator():
     assert after_name("plan.pdf, page 12", "plan.pdf") == "page 12"
@@ -180,3 +185,35 @@ def test_best_block_highlights_nothing_for_an_answer_in_another_language():
 def test_best_block_highlights_nothing_for_an_empty_fact():
     assert highlighted("") is None
     assert highlighted("We do it") is None
+
+
+def blank_pdf(path, pages):
+    writer = PdfWriter()
+    for _ in range(pages):
+        writer.add_blank_page(width=200, height=200)
+    writer.write(path)
+    return path
+
+
+def test_viewer_opens_a_pdf_at_the_cited_page(tmp_path):
+    viewer = SourceViewer()
+    viewer.show_pdf(blank_pdf(tmp_path / "plan.pdf", 20), "page 12")
+
+    assert viewer.pdf.pageNavigator().currentPage() == 11
+    assert viewer.message.isHidden()
+
+
+def test_viewer_reused_for_a_missing_page_goes_back_to_page_1_and_says_why(tmp_path):
+    viewer = SourceViewer()
+    viewer.show_pdf(blank_pdf(tmp_path / "plan.pdf", 20), "page 12")
+    viewer.show_pdf(blank_pdf(tmp_path / "short.pdf", 3), "page 12")
+
+    assert viewer.pdf.pageNavigator().currentPage() == 0
+    assert "no page 12" in viewer.message.text()
+
+
+def test_viewer_says_when_a_pdf_cannot_be_read(tmp_path):
+    broken = tmp_path / "broken.pdf"
+    broken.write_bytes(b"not a pdf")
+    viewer = SourceViewer()
+    viewer.show_pdf(broken, "page 1")
