@@ -30,7 +30,7 @@ from . import theme
 from .chrome import AppearanceButton, TrafficLights
 from .hotkeys import HotKeyError, HotKeys
 from .pipeline import respond
-from .viewer import after_name
+from .viewer import SourceViewer, after_name
 
 JOIN_SECONDS = 6.0  # a line this soon after the last one continues the same question
 
@@ -206,6 +206,7 @@ class Bridge(QObject):
     timing = Signal(str)  # status bar after an answer
     hotkey = Signal(str)  # a global hotkey was pressed: "ask" or "clear"
     sources = Signal(object)  # selected document paths, used to resolve source tags
+    loaded = Signal(object)  # the loaded documents (material.Source), in the same order as `sources`
 
 
 class Window(QWidget):
@@ -218,6 +219,8 @@ class Window(QWidget):
         self.drag: QPoint | None = None
         self.ask = ask
         self.source_paths: list[Path] = []
+        self.loaded: list[material.Source] = []  # the documents' text, in the order of source_paths
+        self.viewer: SourceViewer | None = None  # set by main(); without it, sources open in their own app
 
         panel = QFrame(self, objectName="panel")
         outer = QVBoxLayout(self)
@@ -287,9 +290,14 @@ class Window(QWidget):
         bridge.meta.connect(self.on_meta)
         bridge.timing.connect(self.set_status)
         bridge.sources.connect(self.set_source_paths)
+        bridge.loaded.connect(self.set_loaded)
 
     def set_source_paths(self, paths: list[Path]) -> None:
         self.source_paths = [Path(path) for path in paths]
+
+    def set_loaded(self, sources: list[material.Source]) -> None:
+        """The documents as material.py loaded them, in the order of source_paths: the viewer shows text files from them."""
+        self.loaded = list(sources)
 
     def set_warning(self, warning: str) -> None:
         self.warning_text = warning
@@ -386,18 +394,24 @@ class Window(QWidget):
             self.plain[card] = text
 
     def open_source(self, link: str) -> None:
-        """Open a selected source file without trusting a model-provided filesystem path."""
+        """Show the cited passage in the viewer (PDF, Markdown or text), or open the file in its own app when the
+        viewer cannot show it. The file is always chosen by index from the selected documents, never by a model path."""
         parsed = parse_source_link(link)
         if parsed is None:
             return
-        index, tag , line = parsed
+        index, tag, line = parsed
         if index >= len(self.source_paths):
             return
         path = self.source_paths[index]
         if not path.is_file():
             self.set_status(f"Source file is no longer available: {path.name}")
             return
-        if not QDesktopServices.openUrl(QUrl.fromLocalFile(str(path))):
+        kind = self.loaded[index].kind if index < len(self.loaded) else None
+        if self.viewer is not None and kind == "pdf":
+            self.viewer.show_pdf(path, tag)
+        elif self.viewer is not None and kind == "text":
+            self.viewer.show_text(path, tag, line, self.loaded[index].text)
+        elif not QDesktopServices.openUrl(QUrl.fromLocalFile(str(path))):
             self.set_status(f"Could not open {path.name}")
 
     def copy_card(self, card: int) -> None:
@@ -503,6 +517,7 @@ def start(copilot_ready: threading.Event, holder: dict, bridge: Bridge, args) ->
     bridge.status.emit("Loading documents…")
     sources = material.load([Path(p) for p in args.docs])
     bridge.sources.emit([Path(p) for p in args.docs])
+    bridge.loaded.emit(sources)
 
     warnings = [
         f"{source.name}: {source.warning}"
