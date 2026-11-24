@@ -66,8 +66,8 @@ def source_index(reference: str, paths: list[Path]) -> int | None:
 
 
 def parse_source_link(link: str) -> tuple[int, str, str] | None:
-    """The file index and the tag text in a source link, or None if the link is not one of ours.
-    The tag is only text to look for; the file is always chosen by the index."""
+    """The file index, the tag text and the fact line in a source link, or None if the link is not one of ours.
+    The tag and the line are only text to look for; the file is always chosen by the index."""
     parts = urlsplit(link)
     if parts.scheme != "murmury-source" or not parts.path.isdecimal():
         return None
@@ -194,6 +194,14 @@ def configure_native_window(widget: QWidget, hide_from_capture: bool = True) -> 
     if sys.platform == "win32":
         return _configure_windows(widget, hide_from_capture)
     return _configure_macos(widget, hide_from_capture)
+
+
+def make_viewer(hide_from_capture: bool = True) -> tuple[SourceViewer, bool]:
+    """The source viewer, set up for this platform before its first show, so not a single frame of it reaches a
+    shared screen. It is reused for every click: hiding keeps its native window and this setup. Returns the viewer
+    and whether it is hidden from capture."""
+    viewer = SourceViewer()
+    return viewer, configure_native_window(viewer, hide_from_capture)
 
 
 class Bridge(QObject):
@@ -674,6 +682,11 @@ def main(argv: list[str] | None = None) -> None:
     hidden = configure_native_window(window, hide_from_capture=not args.show_in_screenshots)
     if not hidden and not args.show_in_screenshots:
         bridge.status.emit("Warning: this window may be visible when you share your screen")
+    viewer, viewer_hidden = make_viewer(hide_from_capture=not args.show_in_screenshots)
+    if viewer_hidden or args.show_in_screenshots:  # otherwise sources keep opening in their own app
+        screen = app.primaryScreen().availableGeometry()
+        viewer.move(max(screen.left(), window.x() - viewer.width() - 12), window.y())  # left of the floating window
+        window.viewer = viewer
     hotkeys = register_global_hotkeys(window, bridge)
     app.aboutToQuit.connect(hotkeys.unregister_all)
     threading.Thread(target=start, args=(ready, holder, bridge, args), daemon=True).start()
