@@ -1,15 +1,15 @@
 import os
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+
 from pypdf import PdfWriter
 from PySide6.QtWidgets import QApplication
-
 
 from copilot.viewer import (SourceViewer, after_name, best_block, find_section, headings, key_words, page_from_tag,
                             pdf_index, qt_position, words)
 
-
 APP = QApplication.instance() or QApplication([])
+
 
 def test_after_name_removes_the_file_name_and_its_separator():
     assert after_name("plan.pdf, page 12", "plan.pdf") == "page 12"
@@ -96,7 +96,6 @@ Two founders.
 def shown(tag):
     start, end, message = find_section(tag, "notes.md", NOTES)
     return NOTES[start:end], message
-
 
 
 def test_words_keeps_section_numbers_whole():

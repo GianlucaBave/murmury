@@ -8,9 +8,12 @@ from pathlib import Path
 from types import SimpleNamespace
 
 from PySide6.QtCore import QUrl
+from PySide6.QtWidgets import QApplication
 
 from copilot import app, material
-from copilot.app import Window, answer_html, source_index, parse_source_link
+from copilot.app import Window, answer_html, parse_source_link, source_index
+
+APP = QApplication.instance() or QApplication([])
 
 
 def test_source_tag_links_when_only_one_document_is_loaded(tmp_path, monkeypatch):
@@ -137,6 +140,7 @@ def test_parse_source_link_rejects_links_that_are_not_ours():
                  "murmury-source:0abc", "other-source:0?tag=page%2012"]:
         assert parse_source_link(link) is None
 
+
 def test_open_source_never_takes_a_path_from_the_tag(tmp_path, monkeypatch):
     document = tmp_path / "plan.pdf"
     document.write_bytes(b"pdf")
@@ -226,3 +230,23 @@ def test_material_load_keeps_one_source_per_path_in_order(tmp_path):
     sources = material.load([broken, missing, good])
 
     assert [source.name for source in sources] == ["broken.pdf", "missing.txt", "notes.md"]
+
+
+def test_a_click_on_a_card_tag_reaches_the_viewer(tmp_path, monkeypatch):
+    """Inside the real window: the documents arrive by signal, an answer becomes a card, and its tag's link opens."""
+    document = tmp_path / "notes.md"
+    document.write_text("## Pricing\n\nThree tiers: €20, €50, €90.\n")
+    bridge = app.Bridge()
+    window = Window(bridge, ask=lambda text: None)
+    viewer = window.viewer = FakeViewer()
+    bridge.sources.emit([document])
+    bridge.loaded.emit(material.load([document]))
+    monkeypatch.setattr(app.QDesktopServices, "openUrl", lambda url: True)
+
+    window.on_card(1, "How much does it cost?")
+    window.on_answer(1, "SAY: Three tiers.\n- Our three tiers cost €20, €50 and €90 [Pricing]")
+    href = html.unescape(re.search(r'href="([^"]+)"', window.cards[1][2].text()).group(1))
+    window.open_source(href)
+
+    assert viewer.calls == [("text", "notes.md", "Pricing", "Our three tiers cost €20, €50 and €90",
+                             document.read_text())]
