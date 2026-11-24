@@ -3,6 +3,7 @@
 The functions at the top choose what to show from a source tag; they need no window, so they are tested without a
 screen. SourceViewer below is the window. app.py hides it from screen sharing, as it does the floating window.
 """
+
 from __future__ import annotations
 
 import re
@@ -10,13 +11,14 @@ from pathlib import Path
 
 from PySide6.QtCore import QPointF, Qt, QTimer, QUrl
 from PySide6.QtGui import QColor, QDesktopServices, QKeySequence, QShortcut, QTextCursor
-from PySide6.QtWidgets import (QFrame, QHBoxLayout, QLabel, QPlainTextEdit, QPushButton, QStackedWidget,
-                               QTextEdit, QVBoxLayout, QWidget)
 from PySide6.QtPdf import QPdfDocument
 from PySide6.QtPdfWidgets import QPdfView
+from PySide6.QtWidgets import (QFrame, QHBoxLayout, QLabel, QPlainTextEdit, QPushButton, QStackedWidget,
+                               QTextEdit, QVBoxLayout, QWidget)
+
 from . import theme
 
-NAME_ENDS = " ,:!#[" # what may follow a file name in a tag: "plan.pdf, page 12", "notes.md#Pricing"
+NAME_ENDS = " ,:!#["  # what may follow a file name in a tag: "plan.pdf, page 12", "notes.md#Pricing"
 
 
 def after_name(tag: str, name: str) -> str | None:
@@ -111,6 +113,7 @@ def find_section(tag: str, name: str, text: str) -> tuple[int, int, str | None]:
 COMMON = frozenset("the and our for are was were with that this from have has its but not you your they their will can".split())
 MIN_SHARE = 0.5  # share of a fact's key words a line must hold to be highlighted: a starting value, tune it on real calls
 
+
 def key_words(text: str) -> list[str]:
     """The words that tell one line from another: numbers, and words of three letters or more that are not common
     little words ("we", "the", "and" say nothing about where a fact comes from)."""
@@ -148,6 +151,7 @@ QPushButton { background: transparent; border: none; color: $secondary; font-siz
 QPushButton:hover { color: $link; }
 QPlainTextEdit { background: $card; color: $text; border: 1px solid $card_border; border-radius: 8px; padding: 6px; }
 """
+
 
 class SourceViewer(QWidget):
     """A small window that shows the cited passage. It is made once and reused: Close only hides it, which keeps
@@ -204,7 +208,6 @@ class SourceViewer(QWidget):
         QShortcut(QKeySequence("Escape"), self, self.hide)
         self.apply_theme()
         theme.watch(self.apply_theme)
-
 
     def apply_theme(self) -> None:
         self.setStyleSheet(theme.fill(STYLE))
