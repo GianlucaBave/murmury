@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+import numpy as np
 from collections.abc import Callable
 from dataclasses import dataclass
 
@@ -94,3 +95,38 @@ def chunk_source(
             start = end - overlap
 
     return chunks
+
+
+def cosine_similarity(
+    query: np.ndarray,
+    embeddings: np.ndarray,
+) -> np.ndarray:
+
+    query = np.asarray(query, dtype=float)
+    embeddings = np.asarray(embeddings, dtype=float)
+
+    query_norm = np.linalg.norm(query)
+    embedding_norms = np.linalg.norm(embeddings, axis=1)
+
+    denominator = query_norm * embedding_norms
+
+    return np.divide(
+        embeddings @ query,
+        denominator,
+        out=np.zeros(len(embeddings)),
+        where=denominator != 0,
+    )
+
+
+def rank_candidates(
+    query: np.ndarray,
+    embeddings: np.ndarray,
+    top_k: int = RETRIEVAL_TOP_K,
+) -> list[int]:
+
+    if top_k <= 0 or len(embeddings) == 0:
+        return []
+
+    scores = cosine_similarity(query, embeddings)
+
+    return np.argsort(-scores, kind="stable")[:top_k].tolist()

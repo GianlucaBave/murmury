@@ -1,9 +1,16 @@
 import re
 
+import numpy as np
 import pytest
 
 from copilot.material import Source
-from copilot.retrieval import Chunk, split_sections, chunk_source
+from copilot.retrieval import (
+    Chunk,
+    split_sections,
+    chunk_source,
+    cosine_similarity,
+    rank_candidates,
+)
 
 
 def tokenize(text):
@@ -120,3 +127,81 @@ def test_invalid_chunk_parameters(size, overlap):
 
     with pytest.raises(ValueError):
         chunk_source(source, tokenize, size, overlap)
+
+
+def test_cosine_similarity():
+    query = np.array([1, 0])
+    embeddings = np.array([
+        [1, 0],
+        [0, 1],
+        [-1, 0],
+    ])
+
+    scores = cosine_similarity(query, embeddings)
+
+    np.testing.assert_allclose(scores, [1, 0, -1])
+
+
+def test_zero_embedding():
+    query = np.array([1, 0])
+    embeddings = np.array([[0, 0]])
+
+    scores = cosine_similarity(query, embeddings)
+
+    np.testing.assert_allclose(scores, [0])
+
+
+def test_zero_query():
+    query = np.array([0, 0])
+    embeddings = np.array([[1, 0], [0, 1]])
+
+    scores = cosine_similarity(query, embeddings)
+
+    np.testing.assert_allclose(scores, [0, 0])
+
+
+def test_rank_candidates():
+    query = np.array([1, 0])
+    embeddings = np.array([
+        [0, 1],
+        [1, 0],
+        [0.8, 0.2],
+    ])
+
+    assert rank_candidates(query, embeddings) == [1, 2, 0]
+
+
+def test_top_k_limit():
+    query = np.array([1, 0])
+    embeddings = np.array([
+        [0, 1],
+        [1, 0],
+        [0.8, 0.2],
+    ])
+
+    assert rank_candidates(query, embeddings, 2) == [1, 2]
+
+
+def test_empty_embeddings():
+    query = np.array([1, 0])
+    embeddings = np.empty((0, 2))
+
+    assert rank_candidates(query, embeddings) == []
+
+
+def test_zero_top_k():
+    query = np.array([1, 0])
+    embeddings = np.array([[1, 0]])
+
+    assert rank_candidates(query, embeddings, 0) == []
+
+
+def test_equal_similarity():
+    query = np.array([1, 0])
+    embeddings = np.array([
+        [1, 0],
+        [1, 0],
+        [1, 0],
+    ])
+
+    assert rank_candidates(query, embeddings) == [0, 1, 2]
