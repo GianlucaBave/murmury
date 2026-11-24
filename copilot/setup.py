@@ -362,7 +362,7 @@ class Config:
     style: Style = field(default_factory=Style)
     provider: str = providers.DEFAULT
     address: str = ""  # Ollama / LM Studio on another computer; empty: this Mac
-
+    retrieval: bool = False
 
 def default_provider(settings: QSettings | None = None) -> str:
     """The AI service chosen last time, else Anthropic."""
@@ -671,6 +671,10 @@ class SetupDialog(QDialog):
         self.prepare_n = QSpinBox(minimum=5, maximum=40, value=20, suffix=" questions")
         self.prepare_on.toggled.connect(self.prepare_n.setEnabled)
         call.add("Prepare likely questions first", self.prepare_n, self.prepare_on)
+        self.retrieval_on = Switch()
+        self.retrieval_on.toggled.connect(lambda _: self.update_save_state())
+        self.retrieval_on.setToolTip("Enable local retrieval when documents exceed the model context.")
+        call.add("Local document retrieval", self.retrieval_on)
         left.addWidget(call)
         left.addStretch(1)
 
@@ -876,6 +880,7 @@ class SetupDialog(QDialog):
                         self.model.currentData(), self.current_style(), self.provider_id())
         if not providers.provider(config.provider).key_required:
             config.address = self.address_field.text().strip()
+            config.retrieval = self.retrieval_on.isChecked()
         if config.provider != "anthropic":
             config.prepare = 0  # preparing answers uses Anthropic's separate question check
         save_style(self.settings, config.style)
@@ -984,6 +989,7 @@ class SetupDialog(QDialog):
         self.paths_ = []
         self.situation.setText("")
         self.vocabulary.setText("")
+        self.retrieval_on.setChecked(False)
         self.set_style(Style())  # a new call starts from the standard style, without another call's rules
         self.call_note.setText("")
         self.delete_call_btn.setVisible(False)
@@ -1005,6 +1011,7 @@ class SetupDialog(QDialog):
         self.vocabulary.setText(call.get("vocabulary", ""))
         if style := call.get("style"):
             self.set_style(Style(**{k: v for k, v in style.items() if k in STYLE_KEYS}))
+        self.retrieval_on.setChecked(call.get("retrieval", False) is True)
         provider_id = providers.provider(call.get("provider")).id
         if call.get("model"):
             self.settings.setValue(f"model_{provider_id}", call["model"])  # preselected when the list arrives
@@ -1021,7 +1028,8 @@ class SetupDialog(QDialog):
         """What a saved call holds, to tell whether the screen differs from what was saved."""
         return {"name": self.call_name.text().strip(), "docs": list(self.paths_),
                 "situation": self.situation.text().strip(), "vocabulary": self.vocabulary.text().strip(),
-                "provider": self.provider_id(), "model": self.model.currentData(), "style": asdict(self.current_style())}
+                "provider": self.provider_id(), "model": self.model.currentData(), "style": asdict(self.current_style()),
+                "retrieval": self.retrieval_on.isChecked() and not providers.provider(self.provider_id()).key_required}
 
     def update_save_state(self) -> None:
         if not hasattr(self, "save_btn"):
@@ -1059,7 +1067,8 @@ class SetupDialog(QDialog):
         calls.insert(0, {"id": call_id, "name": name[:60], "docs": list(self.paths_),
                          "situation": self.situation.text().strip(), "vocabulary": self.vocabulary.text().strip(),
                          "provider": self.provider_id(), "model": self.model.currentData(),
-                         "style": asdict(self.current_style())})
+                         "style": asdict(self.current_style()),
+                         "retrieval": self.retrieval_on.isChecked() and not providers.provider(self.provider_id()).key_required})
         self.settings.setValue("calls", json.dumps(calls))
         self.current_call = call_id
         self._saved_state = self.call_state()
@@ -1090,7 +1099,9 @@ class SetupDialog(QDialog):
         self.key_field.setPlaceholderText(f"Paste your {p.name.split(' ·')[0]} key ({p.key_hint})")
         self.address_field.setPlaceholderText(f"This Mac ({p.base_url.removesuffix('/v1')})" if p.base_url else "")
         self.address_field.setText(str(self.settings.value(f"address_{p.id}") or "") if not p.key_required else "")
+        self.retrieval_on.setEnabled(not p.key_required)
         self.prepare_on.setEnabled(anthropic)
+
         self.prepare_n.setEnabled(anthropic and self.prepare_on.isChecked())
         self.prepare_on.setToolTip("Takes about 30 seconds and costs about $0.5 for 20 questions (estimate)."
                                    if anthropic else "Available with Anthropic: other services write every answer live.")

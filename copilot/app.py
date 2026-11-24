@@ -588,6 +588,7 @@ def main(argv: list[str] | None = None) -> None:
                         help='what the call is, e.g. "a seed pitch to an investor"')
     parser.add_argument("--vocabulary", default="", help="names the transcription should get right, comma separated")
     parser.add_argument("--prepare", type=int, default=0, help="prepare answers to N expected questions first")
+    parser.add_argument("--retrieval", action="store_true", help="enable local document retrieval when context overflows")
     parser.add_argument("--provider", choices=[p.id for p in providers.PROVIDERS], default=None,
                         help="the AI service whose API key answers (default: as on the setup screen)")
     parser.add_argument("--model", default=None, help="answer model (default: as on the setup screen)")
@@ -620,12 +621,14 @@ def main(argv: list[str] | None = None) -> None:
         args.prepare, args.model, args.style = config.prepare, config.model, config.style
         args.provider = config.provider
         args.address = config.address
+        args.retrieval = args.retrieval or config.retrieval
     else:
         from .setup import default_provider, load_style, settings_store
         args.style = load_style()
         args.provider = args.provider or default_provider()
         args.model = args.model or settings_store().value(f"model_{args.provider}") or "claude-sonnet-5-5"
         args.address = args.address or settings_store().value(f"address_{args.provider}") or ""
+    args.retrieval = args.retrieval and not providers.provider(args.provider).key_required
     global MAX_LINES, FORMAT
     MAX_LINES = args.style.lines
     FORMAT = args.style.format
