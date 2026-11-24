@@ -1,11 +1,12 @@
 from __future__ import annotations
 
 import re
-import numpy as np
 from collections.abc import Callable
 from dataclasses import dataclass
 
-from .material import Source
+import numpy as np
+
+from .material import Source, as_prompt
 
 
 CHUNK_SIZE = 500
@@ -130,3 +131,81 @@ def rank_candidates(
     scores = cosine_similarity(query, embeddings)
 
     return np.argsort(-scores, kind="stable")[:top_k].tolist()
+
+
+class RetrievalIndex:
+    def __init__(
+        self,
+        chunks: list[Chunk],
+        embeddings: np.ndarray,
+        embed_query: Callable[[str], np.ndarray],
+        rerank: Callable[[str, list[str]], list[float]],
+    ):
+        self.chunks = list(chunks)
+        self.embeddings = np.asarray(embeddings, dtype=float)
+        self.embed_query = embed_query
+        self.rerank = rerank
+
+        if len(self.chunks) != len(self.embeddings):
+            raise ValueError("Chunk and embedding counts must match")
+
+    def retrieve(
+        self,
+        question: str,
+        top_k: int = RETRIEVAL_TOP_K,
+        final_k: int = RERANK_TOP_K,
+    ) -> list[Chunk]:
+
+        if not self.chunks or top_k <= 0 or final_k <= 0:
+            return []
+
+        query = self.embed_query(question)
+
+        indices = rank_candidates(
+            query,
+            self.embeddings,
+            top_k,
+        )
+
+        candidates = [self.chunks[i] for i in indices]
+
+        texts = [
+            chunk.as_source().text
+            for chunk in candidates
+        ]
+
+        scores = self.rerank(question, texts)
+
+        if len(scores) != len(candidates):
+            raise ValueError("Invalid reranking scores")
+
+        order = np.argsort(
+            -np.asarray(scores, dtype=float),
+            kind="stable",
+        )
+
+        return [
+            candidates[i]
+            for i in order[:final_k]
+        ]
+
+    def retrieve_prompt(
+        self,
+        question: str,
+        count_tokens: Callable[[str], int],
+        token_budget: int,
+    ) -> str:
+
+        if token_budget <= 0:
+            return ""
+
+        selected = []
+
+        for chunk in self.retrieve(question):
+            candidate = selected + [chunk.as_source()]
+            prompt = as_prompt(candidate)
+
+            if count_tokens(prompt) <= token_budget:
+                selected = candidate
+
+        return as_prompt(selected)
