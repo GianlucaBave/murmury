@@ -6,7 +6,7 @@ from PySide6.QtWidgets import QApplication
 
 
 from copilot.viewer import (SourceViewer, after_name, best_block, find_section, headings, key_words, page_from_tag,
-                            pdf_index, words)
+                            pdf_index, qt_position, words)
 
 
 APP = QApplication.instance() or QApplication([])
@@ -195,6 +195,22 @@ def blank_pdf(path, pages):
     return path
 
 
+def test_qt_position_counts_an_emoji_as_two():
+    assert qt_position("Pricing", 3) == 3
+    assert qt_position("🚀 Pricing", 2) == 3
+
+
+def test_viewer_shows_the_cited_section_with_the_fact_highlighted(tmp_path):
+    viewer = SourceViewer()
+    viewer.show_text(tmp_path / "notes.md", "Pricing", "Our three tiers cost €20, €50 and €90 a month", NOTES)
+
+    shown = viewer.text.toPlainText()
+    assert shown.startswith("## Pricing") and "4.2 Go-to-market" not in shown
+    [selection] = viewer.text.extraSelections()
+    assert selection.cursor.selectedText() == "Three tiers: €20, €50, €90."
+    assert viewer.message.isHidden()
+
+
 def test_viewer_opens_a_pdf_at_the_cited_page(tmp_path):
     viewer = SourceViewer()
     viewer.show_pdf(blank_pdf(tmp_path / "plan.pdf", 20), "page 12")
@@ -217,3 +233,37 @@ def test_viewer_says_when_a_pdf_cannot_be_read(tmp_path):
     broken.write_bytes(b"not a pdf")
     viewer = SourceViewer()
     viewer.show_pdf(broken, "page 1")
+
+    assert "Could not open" in viewer.message.text()
+
+
+def test_viewer_reused_clears_the_old_highlight_when_unsure(tmp_path):
+    viewer = SourceViewer()
+    viewer.show_text(tmp_path / "notes.md", "Pricing", "Our three tiers cost €20, €50 and €90 a month", NOTES)
+    viewer.show_text(tmp_path / "notes.md", "Pricing", "Abbiamo tre fasce di prezzo", NOTES)
+
+    assert viewer.text.extraSelections() == []
+
+
+def test_viewer_shows_the_start_and_says_why_when_the_heading_is_missing(tmp_path):
+    viewer = SourceViewer()
+    viewer.show_text(tmp_path / "notes.md", "Roadmap", "", NOTES)
+
+    assert viewer.text.toPlainText().startswith("# Plan")
+    assert "No heading" in viewer.message.text()
+
+
+def test_viewer_highlights_the_right_line_after_an_emoji(tmp_path):
+    viewer = SourceViewer()
+    viewer.show_text(tmp_path / "notes.md", "Launch", "We launch in May 2027", "## 🚀 Launch\n\nWe launch in May 2027.\n")
+
+    [selection] = viewer.text.extraSelections()
+    assert selection.cursor.selectedText() == "We launch in May 2027."
+
+
+def test_viewer_switches_between_pdf_and_text(tmp_path):
+    viewer = SourceViewer()
+    viewer.show_text(tmp_path / "notes.md", "Pricing", "", NOTES)
+    assert viewer.stack.currentWidget() is viewer.text
+    viewer.show_pdf(blank_pdf(tmp_path / "plan.pdf", 3), "page 2")
+    assert viewer.stack.currentWidget() is viewer.pdf

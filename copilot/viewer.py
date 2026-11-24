@@ -8,11 +8,12 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
-from PySide6.QtCore import QPointF, Qt, QUrl
-from PySide6.QtGui import QDesktopServices, QKeySequence, QShortcut
+from PySide6.QtCore import QPointF, Qt, QTimer, QUrl
+from PySide6.QtGui import QColor, QDesktopServices, QKeySequence, QShortcut, QTextCursor
+from PySide6.QtWidgets import (QFrame, QHBoxLayout, QLabel, QPlainTextEdit, QPushButton, QStackedWidget,
+                               QTextEdit, QVBoxLayout, QWidget)
 from PySide6.QtPdf import QPdfDocument
 from PySide6.QtPdfWidgets import QPdfView
-from PySide6.QtWidgets import QFrame, QHBoxLayout, QLabel, QPushButton, QVBoxLayout, QWidget
 from . import theme
 
 NAME_ENDS = " ,:!#[" # what may follow a file name in a tag: "plan.pdf, page 12", "notes.md#Pricing"
@@ -132,6 +133,12 @@ def best_block(fact: str, text: str, start: int, end: int) -> tuple[int, int] | 
     return best if best_share >= MIN_SHARE else None
 
 
+def qt_position(text: str, index: int) -> int:
+    """Where text[index] is for Qt, which counts in UTF-16 units: an emoji like 🚀 is one character in Python
+    and two in Qt."""
+    return len(text[:index].encode("utf-16-le")) // 2
+
+
 STYLE = """
 #panel { background: $glass; border: 1px solid $panel_border; border-radius: 12px; }
 QLabel { color: $text; }
@@ -139,6 +146,7 @@ QLabel { color: $text; }
 #message { color: $tag_fg; background: $tag_bg; border-radius: 6px; padding: 4px 8px; font-size: 12px; }
 QPushButton { background: transparent; border: none; color: $secondary; font-size: 13px; padding: 0 4px; }
 QPushButton:hover { color: $link; }
+QPlainTextEdit { background: $card; color: $text; border: 1px solid $card_border; border-radius: 8px; padding: 6px; }
 """
 
 class SourceViewer(QWidget):
@@ -186,7 +194,12 @@ class SourceViewer(QWidget):
         self.pdf.setDocument(self.document)
         self.pdf.setPageMode(QPdfView.PageMode.SinglePage)
         self.pdf.setZoomMode(QPdfView.ZoomMode.FitToWidth)
-        box.addWidget(self.pdf, 1)
+        self.text = QPlainTextEdit(panel)
+        self.text.setReadOnly(True)
+        self.stack = QStackedWidget(panel)
+        self.stack.addWidget(self.pdf)
+        self.stack.addWidget(self.text)
+        box.addWidget(self.stack, 1)
 
         QShortcut(QKeySequence("Escape"), self, self.hide)
         self.apply_theme()
@@ -208,9 +221,7 @@ class SourceViewer(QWidget):
         self.title.setText(path.name)
         self.say(None)
         self.document.load(str(path))
-        self.show()
-        self.raise_()
-        self.activateWindow()
+        self.present(self.pdf)
 
     def pdf_status(self, status: QPdfDocument.Status) -> None:
         if status == QPdfDocument.Status.Ready:
@@ -219,6 +230,34 @@ class SourceViewer(QWidget):
             self.say(message)
         elif status == QPdfDocument.Status.Error:
             self.say(f"Could not open {self.path.name} here: try Open in app")
+
+    def show_text(self, path: Path, tag: str, fact: str, text: str) -> None:
+        """Show the section a heading tag cites, with the line the fact comes from highlighted and scrolled into view."""
+        self.path, self.tag = path, tag
+        self.title.setText(path.name)
+        start, end, message = find_section(tag, path.name, text)
+        shown = text[start:end]
+        self.text.setPlainText(shown)
+        self.text.setExtraSelections([])
+        block = best_block(fact, text, start, end)
+        if block:
+            self.highlight(shown, block[0] - start, block[1] - start)
+        self.say(message)
+        self.present(self.text)
+        QTimer.singleShot(0, self.text.ensureCursorVisible)
+
+    def highlight(self, shown: str, start: int, end: int) -> None:
+        """Colour shown[start:end] and put the text cursor at its start, so the view can scroll to it."""
+        cursor = QTextCursor(self.text.document())
+        cursor.setPosition(qt_position(shown, start))
+        cursor.setPosition(qt_position(shown, end), QTextCursor.MoveMode.KeepAnchor)
+        selection = QTextEdit.ExtraSelection()
+        selection.cursor = cursor
+        selection.format.setBackground(QColor(theme.palette()["tag_bg"]))
+        self.text.setExtraSelections([selection])
+        place = QTextCursor(self.text.document())
+        place.setPosition(qt_position(shown, start))
+        self.text.setTextCursor(place)
 
     def open_in_app(self) -> None:
         """The second choice: the whole file in its own app, which screen sharing can see."""
@@ -236,3 +275,10 @@ class SourceViewer(QWidget):
 
     def mouseReleaseEvent(self, event):
         self.drag = None
+
+    def present(self, view: QWidget) -> None:
+        """Bring the window up showing `view` (the PDF or the text), above Murmury's other windows, with focus for Esc."""
+        self.stack.setCurrentWidget(view)
+        self.show()
+        self.raise_()
+        self.activateWindow()
