@@ -46,16 +46,23 @@ class OpenAICopilot:
         self.client = OpenAI(api_key=key, base_url=provider.base_url, timeout=60 if provider.key_required else 600)
         self.style = style or Style()
         self.model = model
-        self.system = instructions(situation, self.style) + "\n" + GATE + "\n\n" + material
+        self.system_prefix = instructions(situation, self.style) + "\n" + GATE + "\n\n"
+        self.system = self.system_prefix + material
+        self.retrieval_index = None
+        self.retrieval_backend = None
+        self.context_limit = None
         self.history: list[tuple[str, str]] = []
         # optional fields, dropped one by one if the service refuses them
         self.optional = {"stream_options": {"include_usage": True}, **provider.options,
                          **_reasoning(provider.id, model)}
         self.limit_field = "max_completion_tokens" if provider.id == "openai" else "max_tokens"
 
-    def _call(self, content: str, limit: int):
+    def _call(self, content: str, limit: int, system: str | None = None):
         import openai
-        messages = [{"role": "system", "content": self.system}, {"role": "user", "content": content}]
+        messages = [
+            {"role": "system", "content": self.system if system is None else system},
+            {"role": "user", "content": content},
+        ]
         while True:
             try:
                 return self.client.chat.completions.create(
@@ -68,6 +75,19 @@ class OpenAICopilot:
                     raise
                 for name in refused:
                     self.optional.pop(name)
+
+    def enable_retrieval(self, sources, context_limit: int) -> None:
+        if self.provider.key_required:
+            return
+
+        from .fastembed_backend import FastEmbedBackend
+
+        backend = FastEmbedBackend()
+        index = backend.build_index(sources)
+
+        self.retrieval_backend = backend
+        self.retrieval_index = index
+        self.context_limit = context_limit
 
     @staticmethod
     def _usage(raw) -> Usage:
@@ -88,7 +108,33 @@ class OpenAICopilot:
         earlier = "\n\n".join(f"Q: {q}\nA: {a}" for q, a in self.history[-self.HISTORY_TURNS:])
         content = (f"Earlier in this call:\n{earlier}\n\n" if earlier else "") + \
                   (f"Line before: {before}\n" if before else "") + f"Last line heard: {question}"
-        stream = self._call(content, 300 + 60 * self.style.lines)
+
+        limit = 300 + 60 * self.style.lines
+
+        if self.retrieval_index is not None:
+            backend = self.retrieval_backend
+            budget = (
+                self.context_limit
+                - backend.count_tokens(self.system_prefix)
+                - backend.count_tokens(content)
+                - limit
+                - 128
+            )
+
+            retrieved = self.retrieval_index.retrieve_prompt(
+                question,
+                backend.count_tokens,
+                budget,
+            )
+
+            stream = self._call(
+                content,
+                limit,
+                system=self.system_prefix + retrieved,
+            )
+        else:
+            stream = self._call(content, limit)
+
         try:
             for chunk in stream:
                 if getattr(chunk, "usage", None):
