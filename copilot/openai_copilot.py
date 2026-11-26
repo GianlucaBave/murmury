@@ -18,6 +18,28 @@ from .claude_code import GATE
 from .providers import Provider
 
 
+def is_context_overflow(error: Exception) -> bool:
+    import openai
+
+    if not isinstance(error, openai.BadRequestError):
+        return False
+
+    if getattr(error, "code", None) == "context_length_exceeded":
+        return True
+
+    message = str(error).lower()
+
+    return any(pattern in message for pattern in (
+        "maximum context length",
+        "context length exceeded",
+        "context window exceeded",
+        "exceeds the context length",
+        "exceeds the context window",
+        "input length exceeds",
+        "prompt is too long",
+    ))
+
+
 def _reasoning(provider_id: str, model: str) -> dict:
     """Ask for as little thinking as the model allows: a live answer cannot wait."""
     name = model.split("/")[-1]
@@ -68,6 +90,8 @@ class OpenAICopilot:
                 return self.client.chat.completions.create(
                     model=self.model, stream=True, messages=messages, **{self.limit_field: limit}, **self.optional)
             except openai.BadRequestError as error:
+                if not self.provider.key_required and is_context_overflow(error):
+                    raise
                 refused = [name for name in self.optional if name in str(error)]
                 if not refused and self.optional:
                     refused = list(self.optional)  # the service did not say which: drop them all
@@ -95,10 +119,11 @@ class OpenAICopilot:
         cached = (getattr(details, "cached_tokens", 0) or 0) if details else 0
         return Usage((raw.prompt_tokens or 0) - cached, 0, cached, raw.completion_tokens or 0)
 
-    def warm(self) -> Usage:
+    def warm(self, system: str | None = None) -> Usage:
         """A first short call proves the key and model work and, where the service caches, stores the documents."""
         usage = Usage()
-        for chunk in self._call("Last line heard: Thanks for joining.", 16):
+        stream = self._call("Last line heard: Thanks for joining.", 16, system=system)
+        for chunk in stream:
             if getattr(chunk, "usage", None):
                 usage = self._usage(chunk.usage)
         return usage

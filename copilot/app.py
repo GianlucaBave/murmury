@@ -23,7 +23,7 @@ from PySide6.QtWidgets import (QApplication, QFrame, QHBoxLayout, QLabel, QLineE
 from . import material
 from . import providers
 from .answer import PreparedCopilot
-from .openai_copilot import OpenAICopilot
+from .openai_copilot import OpenAICopilot, is_context_overflow
 from .listen import StreamingTranscriber
 from . import theme
 from .chrome import AppearanceButton, TrafficLights
@@ -524,11 +524,33 @@ def start(copilot_ready: threading.Event, holder: dict, bridge: Bridge, args) ->
         bridge.status.emit(f"Could not reach the model: {str(error)[:120]}")
         return
     bridge.status.emit("Caching documents…" if service.id == "anthropic" else f"Connecting to {args.model}…")
+    recovered = False
+
     try:
         usage = copilot.warm()
-    except Exception as error:  # no key, no network, a model the key cannot use: say it in the window
-        bridge.status.emit(f"Could not reach {service.name.split(' ·')[0]}: {str(error)[:120]}")
-        return
+    except Exception as error:
+        if not service.key_required and args.retrieval and is_context_overflow(error):
+            try:
+                usage = copilot.warm(system=copilot.system_prefix)
+                context_limit = providers.local_context_length(service, args.model)
+
+                if context_limit is None:
+                    raise RuntimeError("Local context length is unavailable")
+
+                bridge.status.emit("Building document retrieval index\u2026")
+                copilot.enable_retrieval(sources, context_limit)
+                recovered = True
+            except Exception:
+                bridge.warning.emit(
+                    "Document retrieval is unavailable."
+                )
+                bridge.status.emit(
+                    "Raise the local model context length and start again."
+                )
+                return
+        else:
+            bridge.status.emit(f"Could not reach {service.name.split(' \u00b7')[0]}: {str(error)[:120]}")
+            return
     if service.id == "anthropic":
         per_million = {"claude-sonnet-5-5": 4.0, "claude-haiku-4-5": 2.0}.get(args.model)  # 1-hour cache write
         cost = f" (${usage.cache_write * per_million / 1e6:.2f})" if per_million else ""
@@ -538,14 +560,21 @@ def start(copilot_ready: threading.Event, holder: dict, bridge: Bridge, args) ->
         read = usage.input + usage.cache_read
         # a local server keeps only what fits its context length and cuts the rest without saying so
         # (measured: 2,051 of ~27,000 tokens at Ollama's default); documents run 2-4 characters a token
-        if not service.key_required and 0 < read < len(copilot.system) / 6:
+        if recovered:
+            bridge.status.emit(f"Ready \u00b7 {args.model} \u00b7 Retrieval active")
+        elif not service.key_required and 0 < read < len(copilot.system) / 6:
             retrieval_active = False
 
             if args.retrieval:
                 bridge.status.emit("Building document retrieval index…")
 
                 try:
-                    copilot.enable_retrieval(sources, read)
+                    context_limit = providers.local_context_length(
+                        service, args.model
+                    )
+                    copilot.enable_retrieval(
+                        sources, context_limit or read
+                    )
                     retrieval_active = True
                 except Exception:
                     bridge.warning.emit(
