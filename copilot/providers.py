@@ -218,3 +218,56 @@ def suggest(provider_id: str, models: list[str]) -> str | None:
         if matches:
             return max(matches, key=_version)
     return models[0]
+
+
+def local_context_length(p: Provider, model: str) -> int | None:
+    if p.key_required or not p.base_url:
+        return None
+
+    base = p.base_url.rstrip("/").removesuffix("/v1")
+
+    try:
+        if p.id == "ollama":
+            with urllib.request.urlopen(
+                f"{base}/api/ps", timeout=3
+            ) as response:
+                data = json.load(response)
+
+            for entry in data.get("models", []):
+                if model in (entry.get("name"), entry.get("model")):
+                    length = entry.get("context_length")
+
+                    if type(length) is int and length > 0:
+                        return length
+
+        elif p.id == "lm-studio":
+            with urllib.request.urlopen(
+                f"{base}/api/v1/models", timeout=3
+            ) as response:
+                data = json.load(response)
+
+            for entry in data.get("models", []):
+                for instance in entry.get("loaded_instances", []):
+                    if model in (entry.get("key"), instance.get("id")):
+                        length = instance.get("config", {}).get(
+                            "context_length"
+                        )
+
+                        if type(length) is int and length > 0:
+                            return length
+
+    except Exception:
+        return None
+
+    return None
+
+def estimate_prompt_tokens(text: str) -> int:
+    return (len(text.encode("utf-8")) + 2) // 3
+
+
+def context_overflows(
+    text: str,
+    context_length: int,
+    reserved_tokens: int = 512,
+) -> bool:
+    return estimate_prompt_tokens(text) + reserved_tokens > context_length

@@ -24,7 +24,7 @@ from PySide6.QtWidgets import (QApplication, QFrame, QHBoxLayout, QLabel, QLineE
 from . import material
 from . import providers
 from .answer import PreparedCopilot
-from .openai_copilot import OpenAICopilot
+from .openai_copilot import OpenAICopilot, is_context_overflow
 from .listen import StreamingTranscriber
 from . import theme
 from .chrome import AppearanceButton, TrafficLights
@@ -557,11 +557,33 @@ def start(copilot_ready: threading.Event, holder: dict, bridge: Bridge, args) ->
         bridge.status.emit(f"Could not reach the model: {str(error)[:120]}")
         return
     bridge.status.emit("Caching documents…" if service.id == "anthropic" else f"Connecting to {args.model}…")
+    recovered = False
+
     try:
         usage = copilot.warm()
-    except Exception as error:  # no key, no network, a model the key cannot use: say it in the window
-        bridge.status.emit(f"Could not reach {service.name.split(' ·')[0]}: {str(error)[:120]}")
-        return
+    except Exception as error:
+        if not service.key_required and args.retrieval and is_context_overflow(error):
+            try:
+                usage = copilot.warm(system=copilot.system_prefix)
+                context_limit = providers.local_context_length(service, args.model)
+
+                if context_limit is None:
+                    raise RuntimeError("Local context length is unavailable")
+
+                bridge.status.emit("Building document retrieval index\u2026")
+                copilot.enable_retrieval(sources, context_limit)
+                recovered = True
+            except Exception:
+                bridge.warning.emit(
+                    "Document retrieval is unavailable."
+                )
+                bridge.status.emit(
+                    "Raise the local model context length and start again."
+                )
+                return
+        else:
+            bridge.status.emit(f"Could not reach {service.name.split(' \u00b7')[0]}: {str(error)[:120]}")
+            return
     if service.id == "anthropic":
         per_million = {"claude-sonnet-5-5": 4.0, "claude-haiku-4-5": 2.0}.get(args.model)  # 1-hour cache write
         cost = f" (${usage.cache_write * per_million / 1e6:.2f})" if per_million else ""
@@ -571,11 +593,34 @@ def start(copilot_ready: threading.Event, holder: dict, bridge: Bridge, args) ->
         read = usage.input + usage.cache_read
         # a local server keeps only what fits its context length and cuts the rest without saying so
         # (measured: 2,051 of ~27,000 tokens at Ollama's default); documents run 2-4 characters a token
-        if not service.key_required and 0 < read < len(copilot.system) / 6:
-            name, card = service.name.split(" ·")[0], new_card()
-            bridge.card.emit(card, f"{name} cut your documents")
-            bridge.answer.emit(card, f"Only the last {read:,} tokens reached the model, so answers will miss most "
-                                     f"of them. Raise the context length in {name} and start again.")
+        if recovered:
+            bridge.status.emit(f"Ready \u00b7 {args.model} \u00b7 Retrieval active")
+        elif not service.key_required and 0 < read < len(copilot.system) / 6:
+            retrieval_active = False
+
+            if args.retrieval:
+                bridge.status.emit("Building document retrieval index…")
+
+                try:
+                    context_limit = providers.local_context_length(
+                        service, args.model
+                    )
+                    copilot.enable_retrieval(
+                        sources, context_limit or read
+                    )
+                    retrieval_active = True
+                except Exception:
+                    bridge.warning.emit(
+                        "Document retrieval is unavailable. Using the original document prompt."
+                    )
+
+            if retrieval_active:
+                bridge.status.emit(f"Ready · {args.model} · Retrieval active")
+            else:
+                name, card = service.name.split(" ·")[0], new_card()
+                bridge.card.emit(card, f"{name} cut your documents")
+                bridge.answer.emit(card, f"Only the last {read:,} tokens reached the model, so answers will miss most "
+                                         f"of them. Raise the context length in {name} and start again.")
     if args.prepare and isinstance(copilot, PreparedCopilot):
         bridge.status.emit(f"Preparing answers to {args.prepare} expected questions…")
         copilot.prepare(copilot.expected_questions(args.prepare))
@@ -621,6 +666,7 @@ def main(argv: list[str] | None = None) -> None:
                         help='what the call is, e.g. "a seed pitch to an investor"')
     parser.add_argument("--vocabulary", default="", help="names the transcription should get right, comma separated")
     parser.add_argument("--prepare", type=int, default=0, help="prepare answers to N expected questions first")
+    parser.add_argument("--retrieval", action="store_true", help="enable local document retrieval when context overflows")
     parser.add_argument("--provider", choices=[p.id for p in providers.PROVIDERS], default=None,
                         help="the AI service whose API key answers (default: as on the setup screen)")
     parser.add_argument("--model", default=None, help="answer model (default: as on the setup screen)")
@@ -653,12 +699,14 @@ def main(argv: list[str] | None = None) -> None:
         args.prepare, args.model, args.style = config.prepare, config.model, config.style
         args.provider = config.provider
         args.address = config.address
+        args.retrieval = args.retrieval or config.retrieval
     else:
         from .setup import default_provider, load_style, settings_store
         args.style = load_style()
         args.provider = args.provider or default_provider()
         args.model = args.model or settings_store().value(f"model_{args.provider}") or "claude-sonnet-5-5"
         args.address = args.address or settings_store().value(f"address_{args.provider}") or ""
+    args.retrieval = args.retrieval and not providers.provider(args.provider).key_required
     global MAX_LINES, FORMAT
     MAX_LINES = args.style.lines
     FORMAT = args.style.format
