@@ -14,6 +14,7 @@ import sys
 import threading
 import time
 from pathlib import Path, PurePosixPath
+from urllib.parse import parse_qs, quote, urlsplit
 
 from PySide6.QtCore import QObject, QPoint, Qt, QUrl, Signal
 from PySide6.QtGui import QDesktopServices, QFont, QKeySequence, QShortcut
@@ -29,6 +30,7 @@ from . import theme
 from .chrome import AppearanceButton, TrafficLights
 from .hotkeys import HotKeyError, HotKeys
 from .pipeline import respond
+from .viewer import SourceViewer, after_name
 
 JOIN_SECONDS = 6.0  # a line this soon after the last one continues the same question
 
@@ -50,7 +52,6 @@ QPushButton:hover { color: $link; }
 """
 
 REF = re.compile(r"\[([^\]]{1,60})\]\s*$")
-SOURCE_LINK = re.compile(r"murmury-source:(\d+)\Z")
 
 
 def source_index(reference: str, paths: list[Path]) -> int | None:
@@ -59,11 +60,19 @@ def source_index(reference: str, paths: list[Path]) -> int | None:
         return 0
     for index, path in enumerate(paths):
         name = PurePosixPath(str(path).replace("\\", "/")).name
-        if reference.casefold().startswith(name.casefold()):
-            boundary = reference[len(name):len(name) + 1]
-            if not boundary or boundary in " ,:!#[":
-                return index
+        if after_name(reference, name) is not None:
+            return index
     return None
+
+
+def parse_source_link(link: str) -> tuple[int, str, str] | None:
+    """The file index, the tag text and the fact line in a source link, or None if the link is not one of ours.
+    The tag and the line are only text to look for; the file is always chosen by the index."""
+    parts = urlsplit(link)
+    if parts.scheme != "murmury-source" or not parts.path.isdecimal():
+        return None
+    query = parse_qs(parts.query)
+    return int(parts.path), query.get("tag", [""])[0], query.get("line", [""])[0]
 
 
 MAX_LINES = 3  # fact lines a card shows under the SAY line: the answer style's limit, set at start
@@ -113,7 +122,8 @@ def answer_html(text: str, source_paths: list[Path] | None = None) -> str:
         index = source_index(ref.group(1), source_paths or []) if ref else None
         tag_text = (f'&nbsp;{html.escape(ref.group(1), quote=False)}&nbsp;' if ref else "")
         if index is not None:
-            tag = (f' <a href="murmury-source:{index}" style="color:{c["link"]}; text-decoration:underline;">'
+            href = f"murmury-source:{index}?tag={quote(ref.group(1), safe='')}&line={quote(plain, safe='')}"
+            tag = (f' <a href="{html.escape(href)}" style="color:{c["link"]}; text-decoration:underline;">'
                    f'<span style="background:{c["tag_bg"]}; font-size:11px;">{tag_text}</span></a>')
         else:
             tag = (f' <span style="color:{c["tag_fg"]}; background:{c["tag_bg"]}; font-size:11px;">{tag_text}</span>'
@@ -186,6 +196,14 @@ def configure_native_window(widget: QWidget, hide_from_capture: bool = True) -> 
     return _configure_macos(widget, hide_from_capture)
 
 
+def make_viewer(hide_from_capture: bool = True) -> tuple[SourceViewer, bool]:
+    """The source viewer, set up for this platform before its first show, so not a single frame of it reaches a
+    shared screen. It is reused for every click: hiding keeps its native window and this setup. Returns the viewer
+    and whether it is hidden from capture."""
+    viewer = SourceViewer()
+    return viewer, configure_native_window(viewer, hide_from_capture)
+
+
 class Bridge(QObject):
     status = Signal(str)
     warning = Signal(str)
@@ -196,6 +214,7 @@ class Bridge(QObject):
     timing = Signal(str)  # status bar after an answer
     hotkey = Signal(str)  # a global hotkey was pressed: "ask" or "clear"
     sources = Signal(object)  # selected document paths, used to resolve source tags
+    loaded = Signal(object)  # the loaded documents (material.Source), in the same order as `sources`
 
 
 class Window(QWidget):
@@ -208,6 +227,8 @@ class Window(QWidget):
         self.drag: QPoint | None = None
         self.ask = ask
         self.source_paths: list[Path] = []
+        self.loaded: list[material.Source] = []  # the documents' text, in the order of source_paths
+        self.viewer: SourceViewer | None = None  # set by main(); without it, sources open in their own app
 
         panel = QFrame(self, objectName="panel")
         outer = QVBoxLayout(self)
@@ -277,9 +298,14 @@ class Window(QWidget):
         bridge.meta.connect(self.on_meta)
         bridge.timing.connect(self.set_status)
         bridge.sources.connect(self.set_source_paths)
+        bridge.loaded.connect(self.set_loaded)
 
     def set_source_paths(self, paths: list[Path]) -> None:
         self.source_paths = [Path(path) for path in paths]
+
+    def set_loaded(self, sources: list[material.Source]) -> None:
+        """The documents as material.py loaded them, in the order of source_paths: the viewer shows text files from them."""
+        self.loaded = list(sources)
 
     def set_warning(self, warning: str) -> None:
         self.warning_text = warning
@@ -376,18 +402,24 @@ class Window(QWidget):
             self.plain[card] = text
 
     def open_source(self, link: str) -> None:
-        """Open a selected source file without trusting a model-provided filesystem path."""
-        match = SOURCE_LINK.fullmatch(link)
-        if not match:
+        """Show the cited passage in the viewer (PDF, Markdown or text), or open the file in its own app when the
+        viewer cannot show it. The file is always chosen by index from the selected documents, never by a model path."""
+        parsed = parse_source_link(link)
+        if parsed is None:
             return
-        index = int(match.group(1))
+        index, tag, line = parsed
         if index >= len(self.source_paths):
             return
         path = self.source_paths[index]
         if not path.is_file():
             self.set_status(f"Source file is no longer available: {path.name}")
             return
-        if not QDesktopServices.openUrl(QUrl.fromLocalFile(str(path))):
+        kind = self.loaded[index].kind if index < len(self.loaded) else None
+        if self.viewer is not None and kind == "pdf":
+            self.viewer.show_pdf(path, tag)
+        elif self.viewer is not None and kind == "text":
+            self.viewer.show_text(path, tag, line, self.loaded[index].text)
+        elif not QDesktopServices.openUrl(QUrl.fromLocalFile(str(path))):
             self.set_status(f"Could not open {path.name}")
 
     def copy_card(self, card: int) -> None:
@@ -493,6 +525,7 @@ def start(copilot_ready: threading.Event, holder: dict, bridge: Bridge, args) ->
     bridge.status.emit("Loading documents…")
     sources = material.load([Path(p) for p in args.docs])
     bridge.sources.emit([Path(p) for p in args.docs])
+    bridge.loaded.emit(sources)
 
     warnings = [
         f"{source.name}: {source.warning}"
@@ -697,6 +730,11 @@ def main(argv: list[str] | None = None) -> None:
     hidden = configure_native_window(window, hide_from_capture=not args.show_in_screenshots)
     if not hidden and not args.show_in_screenshots:
         bridge.status.emit("Warning: this window may be visible when you share your screen")
+    viewer, viewer_hidden = make_viewer(hide_from_capture=not args.show_in_screenshots)
+    if viewer_hidden or args.show_in_screenshots:  # otherwise sources keep opening in their own app
+        screen = app.primaryScreen().availableGeometry()
+        viewer.move(max(screen.left(), window.x() - viewer.width() - 12), window.y())  # left of the floating window
+        window.viewer = viewer
     hotkeys = register_global_hotkeys(window, bridge)
     app.aboutToQuit.connect(hotkeys.unregister_all)
     threading.Thread(target=start, args=(ready, holder, bridge, args), daemon=True).start()

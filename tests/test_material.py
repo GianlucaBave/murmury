@@ -1,8 +1,10 @@
 from pathlib import Path
 from zipfile import ZIP_DEFLATED, ZipFile
 
+import pytest
 from pypdf import PdfWriter
 
+import copilot.material as material
 from copilot.material import as_prompt, load
 
 
@@ -519,3 +521,104 @@ def test_empty_text_file_produces_warning(tmp_path):
     assert source.kind == "text"
     assert source.text == ""
     assert source.warning == "no text found"
+
+def test_load_uppercase_docx_extension_uses_docx_reader(tmp_path, monkeypatch):
+    path = tmp_path / "REPORT.DOCX"
+
+    def fake_docx_reader(file_path):
+        return "Word document content"
+
+    monkeypatch.setattr(material, "_docx", fake_docx_reader)
+
+    [source] = load([path])
+
+    assert source.kind == "docx"
+    assert source.text == "Word document content"
+    assert source.warning is None
+
+
+def test_load_mixed_case_pptx_extension_uses_pptx_reader(tmp_path, monkeypatch):
+    path = tmp_path / "slides.Pptx"
+
+    def fake_pptx_reader(file_path):
+        return "PowerPoint content"
+
+    monkeypatch.setattr(material, "_pptx", fake_pptx_reader)
+
+    [source] = load([path])
+
+    assert source.kind == "pptx"
+    assert source.text == "PowerPoint content"
+    assert source.warning is None
+
+@pytest.mark.parametrize(
+    "filename",
+    ["notes.md", "data.csv", "README"],
+)
+def test_load_text_extensions_use_text_reader(tmp_path, filename):
+    path = tmp_path / filename
+    path.write_text("Sample content", encoding="utf-8")
+
+    [source] = load([path])
+
+    assert source.kind == "text"
+    assert source.text == "Sample content"
+    assert source.warning is None
+
+def test_as_prompt_preserves_order_and_formatting():
+    sources = [
+        material.Source(
+            name="report.txt",
+            kind="text",
+            text="First document",
+        ),
+        material.Source(
+            name="notes.md",
+            kind="text",
+            text="Second document",
+        ),
+    ]
+
+    result = as_prompt(sources)
+
+    assert result == (
+        '<source name="report.txt" kind="text">\n'
+        'First document\n'
+        '</source>\n\n'
+        '<source name="notes.md" kind="text">\n'
+        'Second document\n'
+        '</source>'
+    )
+def test_as_prompt_empty_list_returns_empty_string():
+    result = as_prompt([])
+
+    assert result == ""
+def test_as_prompt_includes_document_with_warning(tmp_path):
+    path = tmp_path / "empty.txt"
+    path.write_text("", encoding="utf-8")
+
+    [source] = load([path])
+
+    assert source.warning == "no text found"
+
+    result = as_prompt([source])
+
+    assert result == (
+        '<source name="empty.txt" kind="text">\n'
+        '\n'
+        '</source>'
+    )
+def test_as_prompt_filename_with_quotes_documents_current_behavior():
+    source = material.Source(
+        name='my"notes.txt',
+        kind="text",
+        text="Sample content",
+    )
+
+    result = as_prompt([source])
+
+    assert result == (
+        '<source name="my"notes.txt" kind="text">\n'
+        'Sample content\n'
+        '</source>'
+    )

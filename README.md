@@ -97,6 +97,8 @@ Prefer the source? See [For developers](#for-developers).
   the model, together with your documents.
 - **Answers come from your documents only.** Every bullet names its source (section, table, sheet
   and cell). If the documents do not answer the question, the window says so instead of guessing.
+  Click a source to check it: a PDF opens at the cited page, notes at the cited section with the line
+  highlighted, in a small viewer that screen sharing does not show either.
 
 ## Privacy and screen sharing
 
@@ -259,6 +261,7 @@ uv run python -m copilot.listen system
 | `copilot/pipeline.py` | Runs the question check and the live answer in parallel and decides what the window shows |
 | `copilot/setup.py` | The setup screen: documents, kind of call, names to transcribe, model |
 | `copilot/app.py` | The floating window, always on top and excluded from screen sharing |
+| `copilot/viewer.py` | The source viewer: a clicked source opens at the cited PDF page or Markdown/text section, also excluded from screen sharing |
 | `evals/run.py` | Test bench: fixed questions, rule checks and a model grader |
 | `docs/architecture.html` | Diagrams: where each part runs, the audio path, the timeline, the window |
 

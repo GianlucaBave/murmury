@@ -606,6 +606,12 @@ class SetupDialog(QDialog):
         self.drop = DropZone()
         self.drop.clicked.connect(self.add_files)
         left.addWidget(self.drop)
+
+        self.left_out_label = QLabel("", objectName="muted")
+        self.left_out_label.setWordWrap(True)
+        self.left_out_label.hide()
+        left.addWidget(self.left_out_label)
+
         self.files = Group()
         left.addWidget(self.files)
         left.addSpacing(6)
@@ -787,10 +793,32 @@ class SetupDialog(QDialog):
 
     # documents
     def add_paths(self, paths: list[str]) -> None:
+        left_out = []
+
         for p in paths:
             path = Path(p)
-            if path.suffix.lower() in SUFFIXES and path.is_file() and str(path) not in self.paths_:
+            name = path.name or str(path)
+
+            if not path.exists():
+                left_out.append((name, "does not exist"))
+            elif path.is_dir():
+                left_out.append((name, "folder"))
+            elif not path.is_file():
+                left_out.append((name, "not a regular file"))
+            elif path.suffix.lower() not in SUFFIXES:
+                left_out.append((name, "not a supported type"))
+            elif str(path) not in self.paths_:
                 self.paths_.append(str(path))
+
+        message = "; ".join(
+            f"{name} ({reason})" for name, reason in left_out
+        )
+
+        self.left_out_label.setText(
+            f"Left out: {message}" if message else ""
+        )
+        self.left_out_label.setVisible(bool(left_out))
+
         self.refresh()
 
     def remove_path(self, path: str) -> None:
@@ -986,6 +1014,8 @@ class SetupDialog(QDialog):
     def new_call(self) -> None:
         self.current_call = None
         self.call_name.setText("")
+        self.left_out_label.clear()
+        self.left_out_label.hide()
         self.paths_ = []
         self.situation.setText("")
         self.vocabulary.setText("")
@@ -1004,6 +1034,8 @@ class SetupDialog(QDialog):
             return
         self.current_call = call_id
         self.call_name.setText(call.get("name", ""))
+        self.left_out_label.clear()
+        self.left_out_label.hide()
         self.paths_ = [d for d in call.get("docs", []) if Path(d).exists()]
         missing = len(call.get("docs", [])) - len(self.paths_)
         self.call_note.setText(f"{missing} file{'s' if missing > 1 else ''} moved or deleted" if missing else "")
