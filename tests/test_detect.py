@@ -1,5 +1,6 @@
 """Tests for evals/detect.py: the question detectors and how they are scored."""
 
+import re
 import pytest
 
 from evals import detect
@@ -106,3 +107,117 @@ def test_training_is_repeatable_and_separates_a_toy_set():
     assert (weights == detect.train(lines)).all()
     classify = detect.classifier(weights)
     assert [classify(item) for item in lines] == [item.expect == detect.ANSWER for item in lines]
+
+
+def test_row_writes_the_detector_the_lines_both_mistakes_and_the_numbers():
+    false_answer = line("Can you hear me okay?", SKIP, "audio check")
+    false_skip = line("Tell me the price.", ANSWER, "request")
+    result = detect.Score("question mark", "development",
+                          [false_answer, false_skip, line("How much is it?"),
+                           line("Hello everyone.", SKIP, "greeting")],
+                          [false_answer], [false_skip], 1.24)
+    assert detect.row(result) == ["question mark", "development (4)", "1/2", "1/2", "50.0%", "1.2 us"]
+
+
+def test_row_for_an_empty_score_and_zero_accuracy():
+    result = detect.Score("question mark", "development", [], [], [], 0.0)
+    assert result.accuracy == 0.0
+    assert detect.row(result) == ["question mark", "development (0)", "0/0", "0/0", "0.0%", "0.0 us"]
+
+
+def test_row_for_a_scored_detector():
+    lines = [line("Can you hear me okay?", SKIP, "audio check"),
+             line("Tell me the price.", ANSWER, "request"),
+             line("How much is it?"),
+             line("Hello everyone.", SKIP, "greeting")]
+    result = detect.score("question mark", detect.question_mark, "tiny", lines)
+    row = detect.row(result)
+    assert row[:5] == ["question mark", "tiny (4)", "1/2", "1/2", "50.0%"]
+    assert re.fullmatch(r"\d+\.\d us", row[5])
+
+
+def test_table_lines_up_its_columns_and_puts_a_dashed_line_under_the_header():
+    rows = [
+        detect.row(detect.Score("question mark", "development",
+                                [line("How much is it?"), line("Hello everyone.", SKIP, "greeting")],
+                                [], [], 12.34)),
+        detect.row(detect.Score("rules", "development",
+                                [line("How much is it?"), line("Hello everyone.", SKIP, "greeting")],
+                                [line("Hello everyone.", SKIP, "greeting")], [], 5.67)),
+    ]
+    assert rows == [["question mark", "development (2)", "0/1", "0/1", "100.0%", "12.3 us"],
+                    ["rules", "development (2)", "1/1", "0/1", "50.0%", "5.7 us"]]
+    text = detect.table(rows)
+    lines = text.split("\n")
+    assert len(lines) == 4  # header, dashes, two rows
+    grid = [list(detect.COLUMNS)] + rows
+    widths = [max(len(r[i]) for r in grid) for i in range(len(detect.COLUMNS))]
+    offsets = [0]
+    for w in widths[:-1]:
+        offsets.append(offsets[-1] + w + 2)
+    for row_text, expected in zip([lines[0]] + lines[2:], [list(detect.COLUMNS)] + rows):
+        for offset, cell in zip(offsets, expected):
+            assert row_text[offset:offset + len(cell)] == cell
+    dash_groups = [group for group in lines[1].split(" ") if group]
+    assert all(set(group) == {"-"} for group in dash_groups)
+    assert [len(group) for group in dash_groups] == widths
+
+
+def test_markdown_table_has_a_separator_row_and_the_same_number_of_pipes_in_every_row():
+    rows = [
+        ["question mark", "development (2)", "0/1", "0/1", "100.0%", "12.3 us"],
+        ["rules", "development (2)", "1/1", "0/1", "50.0%", "5.7 us"],
+    ]
+    lines = detect.markdown_table(rows).split("\n")
+    assert lines[0] == "| " + " | ".join(detect.COLUMNS) + " |"
+    assert lines[1] == "|" + "---|" * len(detect.COLUMNS)
+    assert all(line.count("|") == len(detect.COLUMNS) + 1 for line in lines)
+    for row_text, expected in zip(lines[2:], rows):
+        assert row_text == "| " + " | ".join(expected) + " |"
+
+
+def test_wrong_lines_lists_the_false_answers_and_the_false_skips_with_their_kind():
+    false_answer = line("Can you hear me okay?", SKIP, "audio check")
+    false_skip = line("Tell me the price.", ANSWER, "request")
+    result = detect.Score("question mark", "development",
+                          [false_answer, false_skip, line("How much is it?"),
+                           line("Hello everyone.", SKIP, "greeting")],
+                          [false_answer], [false_skip], 12.34)
+    assert detect.wrong_lines(result) == (
+        "question mark, development lines, wrong:\n"
+        "  answered, should skip [audio check] 'Can you hear me okay?'\n"
+        "  skipped, should answer [request] 'Tell me the price.'"
+    )
+
+
+def test_wrong_lines_is_only_the_header_when_nothing_is_wrong():
+    result = detect.Score("question mark", "development",
+                          [line("How much is it?"), line("Hello everyone.", SKIP, "greeting")],
+                          [], [], 12.34)
+    assert detect.wrong_lines(result) == "question mark, development lines, wrong:"
+
+
+def test_microseconds_per_line_runs_the_detector_passes_times_repeats_times_lines():
+    calls = []
+
+    def counting_detector(entry):
+        calls.append(entry.text)
+        return True
+
+    lines = [line("How much is it?"), line("Hello everyone.", SKIP, "greeting")]
+    result = detect.microseconds_per_line(counting_detector, lines, passes=2, repeats=3)
+    assert result >= 0.0
+    assert len(calls) == 2 * 3 * 2
+    assert calls.count("How much is it?") == 2 * 3
+    assert calls.count("Hello everyone.") == 2 * 3
+
+
+def test_microseconds_per_line_returns_zero_for_no_lines():
+    calls = []
+
+    def counting_detector(entry):
+        calls.append(entry.text)
+        return True
+
+    assert detect.microseconds_per_line(counting_detector, []) == 0.0
+    assert calls == []
