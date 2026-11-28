@@ -4,8 +4,17 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 import pytest
 
+from pathlib import Path
+
+from PySide6.QtWidgets import QApplication
+
+from copilot import app
+from copilot.app import answer_html, source_index
 from copilot.material import Source
 from copilot.sources import tag_exists
+
+APP = QApplication.instance() or QApplication([])
+PALETTE = {"text": "#111", "tag_fg": "#333", "tag_bg": "#eee", "link": "#06c"}
 
 PDF = Source("plan.pdf", "pdf", "[page 1]\nHello\n\n[page 2]\nWorld")
 MARKDOWN = Source("q3-review.md", "text",
@@ -54,3 +63,42 @@ def test_an_escaped_file_name_in_the_tag_still_matches():
     source = Source('Offer "final".pdf', "pdf", "[page 1]\nx")
     assert tag_exists("Offer &quot;final&quot;.pdf, page 1", source)
     assert not tag_exists("Offer &quot;final&quot;.pdf, page 2", source)
+
+
+def _html(text, paths, sources, monkeypatch):
+    monkeypatch.setattr(app.theme, "palette", lambda: PALETTE)
+    return answer_html(text, paths, sources)
+
+
+def test_a_tag_for_a_missing_place_is_plain_text_even_with_one_document(monkeypatch):
+    rendered = _html("- Revenue grew [?2.1]", [Path("q3-review.md")], [MARKDOWN], monkeypatch)
+    assert "href=" not in rendered
+    assert "?2.1" in rendered
+
+
+def test_a_tag_for_an_existing_heading_is_clickable(monkeypatch):
+    rendered = _html("- We hire two people [Hiring]", [Path("q3-review.md")], [MARKDOWN], monkeypatch)
+    assert 'href="murmury-source:0?tag=Hiring' in rendered
+
+
+def test_without_the_loaded_documents_a_tag_is_accepted_as_before(monkeypatch):
+    rendered = _html("- Revenue grew [?2.1]", [Path("q3-review.md")], None, monkeypatch)
+    assert 'href="murmury-source:0?' in rendered
+
+
+def test_with_several_documents_the_file_and_the_place_must_both_check_out(monkeypatch):
+    paths, sources = [Path("plan.pdf"), Path("model.xlsx")], [PDF, SHEET]
+    assert 'href="murmury-source:0?' in _html("- a [plan.pdf, page 2]", paths, sources, monkeypatch)
+    assert 'href="murmury-source:1?' in _html("- a [model.xlsx, Sales!B2]", paths, sources, monkeypatch)
+    assert "href=" not in _html("- a [plan.pdf, page 9]", paths, sources, monkeypatch)
+    assert "href=" not in _html("- a [page 2]", paths, sources, monkeypatch)
+
+
+def test_a_tag_naming_another_file_is_plain_text_even_with_one_document(monkeypatch):
+    assert "href=" not in _html("- a [other.pdf, page 1]", [Path("plan.pdf")], [PDF], monkeypatch)
+
+
+def test_source_index_checks_the_place_only_once_the_documents_are_loaded():
+    assert source_index("page 2", [Path("plan.pdf")], [PDF]) == 0
+    assert source_index("page 9", [Path("plan.pdf")], [PDF]) is None
+    assert source_index("page 9", [Path("plan.pdf")], []) == 0

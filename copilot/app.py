@@ -30,6 +30,7 @@ from . import theme
 from .chrome import AppearanceButton, TrafficLights
 from .hotkeys import HotKeyError, HotKeys
 from .pipeline import respond
+from .sources import tag_exists
 from .viewer import SourceViewer, after_name
 
 JOIN_SECONDS = 6.0  # a line this soon after the last one continues the same question
@@ -54,7 +55,7 @@ QPushButton:hover { color: $link; }
 REF = re.compile(r"\[([^\]]{1,60})\]\s*$")
 
 
-def source_index(reference: str, paths: list[Path]) -> int | None:
+def _document_index(reference: str, paths: list[Path]) -> int | None:
     """Resolve a citation only when its document is unambiguous.
     The prompt gives names escaped (material.as_prompt), so a tag may echo 'Offer &quot;final&quot;.pdf':
     it matches the file as written, or once unescaped."""
@@ -66,6 +67,16 @@ def source_index(reference: str, paths: list[Path]) -> int | None:
             if after_name(tag, name) is not None:
                 return index
     return None
+
+
+def source_index(reference: str, paths: list[Path], sources: list[material.Source] | None = None) -> int | None:
+    """The document a citation means and, when the loaded documents are given, only if the place it cites
+    exists in that document (sources.tag_exists): a tag that fails the check is not clickable. Without
+    `sources`, or before they are loaded, a tag is accepted as it was."""
+    index = _document_index(reference, paths)
+    if index is None or sources is None or index >= len(sources):
+        return index
+    return index if tag_exists(reference, sources[index]) else None
 
 
 def parse_source_link(link: str) -> tuple[int, str, str] | None:
@@ -103,7 +114,8 @@ def card_lines(text: str) -> list[str]:
     return lines
 
 
-def answer_html(text: str, source_paths: list[Path] | None = None) -> str:
+def answer_html(text: str, source_paths: list[Path] | None = None,
+                sources: list[material.Source] | None = None) -> str:
     """The SAY line large and bold; the facts as bullets with their source as a small tag."""
     c = theme.palette()
     head, items = "", []
@@ -122,7 +134,7 @@ def answer_html(text: str, source_paths: list[Path] | None = None) -> str:
         rest = html.escape(rest, quote=False)
         rest = re.sub(r"([€$£]?\d[\d.,]*\s?(?:%|×|(?:x|m|bn|k|million|billion)\b)?)", rf'<b style="color:{c["text"]};">\1</b>', rest, count=1)
         body = (f'<b style="color:{c["text"]};">{html.escape(label.group(1), quote=False)}:</b> ' if label else "") + rest
-        index = source_index(ref.group(1), source_paths or []) if ref else None
+        index = source_index(ref.group(1), source_paths or [], sources) if ref else None
         tag_text = (f'&nbsp;{html.escape(ref.group(1), quote=False)}&nbsp;' if ref else "")
         if index is not None:
             href = f"murmury-source:{index}?tag={quote(ref.group(1), safe='')}&line={quote(plain, safe='')}"
@@ -364,7 +376,7 @@ class Window(QWidget):
         theme.refresh_native(self)
         for card, (_, _, label, _) in getattr(self, "cards", {}).items():  # answers carry inline colours
             if self.plain.get(card):
-                label.setText(answer_html(self.plain[card], self.source_paths))
+                label.setText(answer_html(self.plain[card], self.source_paths, self.loaded))
 
     def on_card(self, card: int, question: str) -> None:
         if card not in self.cards:
@@ -401,7 +413,7 @@ class Window(QWidget):
 
     def on_answer(self, card: int, text: str) -> None:
         if card in self.cards:
-            self.cards[card][2].setText(answer_html(text, self.source_paths))
+            self.cards[card][2].setText(answer_html(text, self.source_paths, self.loaded))
             self.plain[card] = text
 
     def open_source(self, link: str) -> None:
